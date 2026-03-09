@@ -2,11 +2,11 @@
 
 > Graduation Project — Security Engineering · Machine Learning · DevOps
 
-![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04_LTS-E95420?style=flat&logo=ubuntu&logoColor=white)
+![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=flat&logo=ubuntu&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat&logo=docker&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat&logo=python&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?style=flat&logo=postgresql&logoColor=white)
-![Snort](https://img.shields.io/badge/Snort-IDS-FF0000?style=flat)
+![Snort](https://img.shields.io/badge/Snort-3.x-FF0000?style=flat)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat)
 
 ---
@@ -15,12 +15,13 @@
 
 - [Overview](#-overview)
 - [Architecture](#-architecture)
+- [Why This Design?](#-why-this-design)
 - [Project Structure](#-project-structure)
 - [Components](#-components)
 - [Prerequisites](#-prerequisites)
 - [Phase 1 — Infrastructure Setup](#-phase-1--infrastructure-setup)
-- [Phase 2 — Docker Setup](#-phase-2--docker-setup)
-- [Phase 3 — Snort IDS](#-phase-3--snort-ids)
+- [Phase 2 — Snort IDS](#-phase-2--snort-ids)
+- [Phase 3 — Docker Setup](#-phase-3--docker-setup)
 - [Phase 4 — ML Model](#-phase-4--ml-model)
 - [Phase 5 — Web Dashboard](#-phase-5--web-dashboard)
 - [Phase 6 — Integration & Testing](#-phase-6--integration--testing)
@@ -33,13 +34,13 @@
 
 ## 🔍 Overview
 
-A full-stack, containerized **Network Intrusion Detection System** that combines:
+A full-stack **Network Intrusion Detection System** that combines two complementary detection approaches:
 
-- **Snort IDS** for rule-based packet inspection
-- **ML Model** for anomaly detection and attack classification
-- **PostgreSQL** for persistent storage of alerts and events
-- **Web Dashboard** for real-time monitoring and visualization
-- All services orchestrated via **Docker Compose** on **Ubuntu Server 22.04**
+- **Snort IDS** — rule-based detection, installed directly on the host server
+- **ML Model** — anomaly-based detection using Isolation Forest, learns the behavior of *our own network*
+- **PostgreSQL** — persistent storage for all alerts, predictions, and traffic stats
+- **Web Dashboard** — real-time monitoring and visualization
+- ML Model, PostgreSQL, and Dashboard run as **Docker containers** orchestrated via Docker Compose
 
 ### Key Targets
 
@@ -58,38 +59,91 @@ A full-stack, containerized **Network Intrusion Detection System** that combines
 Internet / Network Traffic
           │
           ▼
-┌─────────────────────────────────────────────────┐
-│              Ubuntu Server 22.04 LTS             │
-│                                                  │
-│  ┌───────────────────────────────────────────┐  │
-│  │         Docker Engine (Compose)            │  │
-│  │                                            │  │
-│  │  ┌──────────┐        ┌──────────────────┐ │  │
-│  │  │  Snort   │──────▶ │    ML Model      │ │  │
-│  │  │  IDS     │        │  (FastAPI:8000)   │ │  │
-│  │  │container │        └────────┬─────────┘ │  │
-│  │  └────┬─────┘                 │            │  │
-│  │       │                       │            │  │
-│  │       └──────────┬────────────┘            │  │
-│  │                  ▼                         │  │
-│  │         ┌─────────────────┐                │  │
-│  │         │   PostgreSQL    │                │  │
-│  │         │  (port: 5432)   │                │  │
-│  │         └────────┬────────┘                │  │
-│  │                  │                         │  │
-│  │         ┌────────▼────────┐                │  │
-│  │         │  Web Dashboard  │                │  │
-│  │         │  (port: 5000) ◀─┼──── Browser   │  │
-│  │         └─────────────────┘                │  │
-│  └───────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                Ubuntu Server 24.04 LTS               │
+│                                                      │
+│  ┌─────────────────────────────────────────────┐    │
+│  │         Snort IDS  (installed on host)       │    │
+│  │                                              │    │
+│  │  Reads live traffic directly from NIC        │    │
+│  │  Applies signature-based rules               │    │
+│  │  Writes alerts → PostgreSQL                  │    │
+│  └───────────────────┬─────────────────────────┘    │
+│                      │                               │
+│                      ▼                               │
+│  ┌─────────────────────────────────────────────┐    │
+│  │         Docker Compose Network               │    │
+│  │                                              │    │
+│  │   ┌─────────────┐      ┌─────────────────┐  │    │
+│  │   │  PostgreSQL │◀────▶│    ML Model     │  │    │
+│  │   │  :5432      │      │  (Python :8000) │  │    │
+│  │   └──────┬──────┘      └─────────────────┘  │    │
+│  │          │                                   │    │
+│  │   ┌──────▼──────┐                            │    │
+│  │   │  Dashboard  │◀──────────── Browser       │    │
+│  │   │  :5000      │                            │    │
+│  │   └─────────────┘                            │    │
+│  └─────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────┘
 ```
 
 ### Internal Data Flow
 
 ```
-Raw Packets → Snort (JSON Alerts) → ML Model (Classification) → PostgreSQL → Dashboard (Real-time UI)
+Network Traffic
+      │
+      ▼
+Snort IDS ──── Signature Match? ──▶ Alert ──▶ PostgreSQL
+      │                                            │
+      │                                            ▼
+      │                                       ML Model
+      │                                  (Anomaly Detection)
+      │                                            │
+      └──── Raw Traffic Stats ──────────────────▶ │
+                                                   ▼
+                                             PostgreSQL
+                                                   │
+                                                   ▼
+                                             Dashboard
+                                          (Real-time UI)
 ```
+
+---
+
+## 🤔 Why This Design?
+
+### Why is Snort installed on the host (not in a container)?
+
+Snort is a **network-level tool** — it needs direct access to the physical network interface to capture every packet *before* any routing or processing happens.
+
+Running it in a container adds unnecessary complexity and latency. Even with `network_mode: host`, containerizing Snort provides no benefit and introduces potential issues with interface detection. The right tool in the right place.
+
+### Why two detection layers?
+
+| Layer | Method | Strength | Weakness |
+|-------|--------|----------|----------|
+| Snort | Signature-based | Catches all *known* attacks instantly | Blind to new/unknown attacks |
+| ML Model | Anomaly-based | Catches *unknown* attacks and zero-days | Needs time to learn normal behavior |
+
+Together they cover each other's blind spots.
+
+### Why does the ML Model learn from our own network?
+
+A pre-trained dataset (e.g., CICIDS2018) was captured on a different network, in a different environment, in 2018. Training only on it means the model learns someone else's "normal."
+
+Our model uses a **two-phase approach:**
+
+```
+Phase A — Bootstrap (Day 1):
+  Train on CICIDS2018 so the model isn't blind from the start
+
+Phase B — Behavioral Baseline (Ongoing):
+  Model observes our real network traffic
+  Builds a profile of what "normal" looks like for us specifically
+  Gradually replaces the generic knowledge with network-specific knowledge
+```
+
+This is exactly how enterprise security tools like Darktrace and CrowdStrike work.
 
 ---
 
@@ -97,9 +151,9 @@ Raw Packets → Snort (JSON Alerts) → ML Model (Classification) → PostgreSQL
 
 ```
 nids-project/
-├── docker-compose.yml          # Main orchestration file
+├── docker-compose.yml          # Orchestrates ML Model, PostgreSQL, Dashboard
 ├── .env                        # Environment variables (NOT in git)
-├── .env.example                # Template for .env
+├── .env.example                # Safe template to commit
 ├── .gitignore
 ├── README.md
 │
@@ -107,30 +161,30 @@ nids-project/
 │   ├── init.sql                # Schema creation
 │   └── seed.sql                # Sample data for testing
 │
-├── snort/
-│   ├── Dockerfile
+├── snort/                      # Snort config (runs on host, not in Docker)
 │   ├── config/
-│   │   └── snort.conf          # Main Snort config
+│   │   └── snort.conf          # Main Snort configuration
 │   ├── rules/
 │   │   └── local.rules         # Custom detection rules
 │   └── scripts/
-│       └── alert_to_db.py      # Parse alerts → PostgreSQL
+│       └── alert_to_db.py      # Parses Snort alerts → PostgreSQL
 │
 ├── ml-model/
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── app/
-│   │   ├── main.py             # FastAPI entrypoint
-│   │   ├── model.py            # ML inference logic
-│   │   ├── database.py         # DB connection
-│   │   └── schemas.py          # Pydantic models
+│   │   ├── main.py             # Service entrypoint (runs every 30s)
+│   │   ├── model.py            # Isolation Forest logic
+│   │   ├── trainer.py          # Training + retraining logic
+│   │   ├── database.py         # PostgreSQL connection
+│   │   └── schemas.py          # Data models
 │   └── models/
-│       └── anomaly_model.pkl   # Trained model (generated)
+│       └── anomaly_model.pkl   # Saved model (generated, not in git)
 │
 ├── dashboard/
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── app.py                  # Flask/FastAPI backend
+│   ├── app.py                  # Flask backend
 │   ├── templates/
 │   │   └── index.html
 │   └── static/
@@ -138,7 +192,7 @@ nids-project/
 │       └── js/
 │
 └── docs/
-    ├── architecture.png
+    ├── architecture.md
     └── setup-guide.md
 ```
 
@@ -146,34 +200,34 @@ nids-project/
 
 ## 📦 Components
 
-### 1️⃣ Snort IDS Container
-- **Base Image:** `ubuntu:24
-- **Role:** Captures live traffic, applies rule-based inspection
-- **Network Mode:** `host` (required to see real traffic)
-- **Output:** Structured JSON alerts → written to PostgreSQL
-- **Capabilities Required:** `NET_ADMIN`, `NET_RAW`
+### 1️⃣ Snort IDS — Host Service
+- **Installed:** Directly on Ubuntu Server 24.04 (not containerized)
+- **Role:** Captures live traffic from the NIC, applies signature-based rules
+- **Why on host:** Needs direct hardware-level access to the network interface
+- **Output:** Structured alerts written to PostgreSQL via `alert_to_db.py`
 
-### 2️⃣ ML Model Container
+### 2️⃣ ML Model — Docker Container
 - **Base Image:** `python:3.11-slim`
-- **Role:** Classifies attack types, detects anomalies
-- **Framework:** FastAPI + scikit-learn
-- **Dataset:** CICIDS2018 / UNSW-NB15
+- **Role:** Anomaly detection using Isolation Forest
+- **Two-phase learning:**
+  - Bootstrap: trained on CICIDS2018 dataset
+  - Ongoing: learns behavioral baseline from our real network traffic
 - **Internal Port:** `8000`
-- **Input:** Reads new alerts from PostgreSQL every 30s
-- **Output:** Writes predictions back to `ml_predictions` table
+- **Schedule:** Analyzes new alerts every 30 seconds, retrains periodically
+- **Output:** Writes anomaly scores and predictions to `ml_predictions` table
 
-### 3️⃣ PostgreSQL Container
+### 3️⃣ PostgreSQL — Docker Container
 - **Image:** `postgres:15-alpine`
-- **Role:** Persistent storage for all alerts, predictions, and stats
-- **Internal Port:** `5432` (never exposed externally)
+- **Role:** Persistent storage for alerts, predictions, and traffic stats
+- **Internal Port:** `5432` — never exposed outside Docker network
 - **Volume:** `postgres-data:/var/lib/postgresql/data`
 
-### 4️⃣ Web Dashboard Container
+### 4️⃣ Web Dashboard — Docker Container
 - **Base Image:** `python:3.11-slim`
-- **Role:** Real-time monitoring UI
+- **Role:** Real-time monitoring and visualization UI
 - **Framework:** Flask + Chart.js
 - **Exposed Port:** `5000` → accessible from browser
-- **Features:** Live alerts table, traffic graphs, severity levels
+- **Features:** Live alerts, anomaly scores, traffic graphs, severity levels
 
 ---
 
@@ -324,7 +378,7 @@ build/
 .venv/
 venv/
 
-# ML Models (large files)
+# ML Models (large binary files)
 ml-model/models/*.pkl
 ml-model/models/*.h5
 ml-model/models/*.joblib
@@ -346,7 +400,7 @@ EOF
 ### Phase 1 Checklist
 
 ```
-□ Ubuntu Server 22.04 installed on VM
+□ Ubuntu Server 24.04 installed on VM
 □ apt update && upgrade completed
 □ Docker CE installed and running
 □ docker run hello-world succeeded
@@ -358,40 +412,40 @@ EOF
 
 ---
 
-## 🐳 Phase 2 — Docker Setup
+## 🛡️ Phase 2 — Snort IDS
 
-> 🔧 Coming next — `docker-compose.yml` full configuration for all 4 services.
+> 🔧 Coming next — Installing Snort 3 directly on Ubuntu 24.04, writing detection rules, and connecting alerts to PostgreSQL via `alert_to_db.py`
 
 ---
 
-## 🛡️ Phase 3 — Snort IDS
+## 🐳 Phase 3 — Docker Setup
 
-> 🔧 Coming next — Snort Dockerfile, config, rules, and DB integration script.
+> 🔧 Coming next — `docker-compose.yml` for ML Model, PostgreSQL, and Dashboard containers.
 
 ---
 
 ## 🧠 Phase 4 — ML Model
 
-> 🔧 Coming next — FastAPI service, model training on CICIDS2018, anomaly classification.
+> 🔧 Coming next — Isolation Forest implementation, two-phase training (CICIDS2018 bootstrap + live network behavioral baseline), anomaly scoring.
 
 ---
 
 ## 📊 Phase 5 — Web Dashboard
 
-> 🔧 Coming next — Flask app, real-time alerts UI, Chart.js visualizations.
+> 🔧 Coming next — Flask app, real-time alerts UI, anomaly score visualization, Chart.js graphs.
 
 ---
 
 ## 🔗 Phase 6 — Integration & Testing
 
-> 🔧 Coming next — End-to-end testing, attack simulation, performance benchmarks.
+> 🔧 Coming next — End-to-end testing, simulated attack scenarios, performance benchmarks.
 
 ---
 
 ## 🗄️ Database Schema
 
 ```sql
--- Snort alerts table
+-- Snort alerts (written by alert_to_db.py running on host)
 CREATE TABLE snort_alerts (
     id            SERIAL PRIMARY KEY,
     timestamp     TIMESTAMP DEFAULT NOW(),
@@ -401,27 +455,39 @@ CREATE TABLE snort_alerts (
     dst_port      INTEGER,
     protocol      VARCHAR(10),
     alert_msg     TEXT,
-    severity      INTEGER,        -- 1:High  2:Medium  3:Low
-    raw_payload   TEXT
+    severity      INTEGER        -- 1:High  2:Medium  3:Low
 );
 
--- ML predictions table
+-- ML anomaly detection results
 CREATE TABLE ml_predictions (
-    id            SERIAL PRIMARY KEY,
-    alert_id      INTEGER REFERENCES snort_alerts(id),
-    timestamp     TIMESTAMP DEFAULT NOW(),
-    is_anomaly    BOOLEAN,
-    confidence    FLOAT,          -- 0.0 to 1.0
-    attack_type   VARCHAR(50)     -- DDoS, PortScan, BruteForce, etc.
+    id              SERIAL PRIMARY KEY,
+    alert_id        INTEGER REFERENCES snort_alerts(id),
+    timestamp       TIMESTAMP DEFAULT NOW(),
+    is_anomaly      BOOLEAN,
+    anomaly_score   FLOAT,       -- Isolation Forest score (-1 to 1)
+    confidence      FLOAT,       -- 0.0 to 1.0
+    attack_type     VARCHAR(50)  -- DDoS, PortScan, BruteForce, Unknown...
 );
 
--- Traffic statistics table
+-- Raw traffic statistics (for ML baseline learning)
 CREATE TABLE traffic_stats (
-    id            SERIAL PRIMARY KEY,
-    timestamp     TIMESTAMP DEFAULT NOW(),
-    total_packets INTEGER,
-    blocked_count INTEGER,
-    anomaly_count INTEGER
+    id              SERIAL PRIMARY KEY,
+    timestamp       TIMESTAMP DEFAULT NOW(),
+    src_ip          VARCHAR(45),
+    dst_ip          VARCHAR(45),
+    protocol        VARCHAR(10),
+    packet_count    INTEGER,
+    byte_count      INTEGER,
+    duration_ms     INTEGER
+);
+
+-- ML model training history
+CREATE TABLE model_versions (
+    id              SERIAL PRIMARY KEY,
+    trained_at      TIMESTAMP DEFAULT NOW(),
+    training_source VARCHAR(50),  -- 'CICIDS2018' or 'live_network'
+    samples_count   INTEGER,
+    model_path      TEXT
 );
 ```
 
@@ -446,27 +512,38 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env` to 
 
 ## 🔒 Security Notes
 
-- **PostgreSQL** port `5432` is never exposed outside Docker network
-- **`.env`** file has `chmod 600` permissions and is in `.gitignore`
-- **Snort container** requires `NET_ADMIN` and `NET_RAW` capabilities — do not grant more
+- **Snort** runs on the host with only the permissions it needs — no unnecessary capabilities
+- **PostgreSQL** port `5432` is never exposed outside the Docker network
+- **`.env`** has `chmod 600` permissions and is excluded from git
+- **ML model files** (`.pkl`) are excluded from git — too large and contain sensitive training data
 - In production, replace `.env` passwords with **Docker Secrets** or **HashiCorp Vault**
-- Dashboard should be behind a reverse proxy (Nginx) with HTTPS in production
+- Dashboard should sit behind an **Nginx reverse proxy** with HTTPS in production
 
 ---
 
 ## 🗺️ Roadmap
 
 - [x] Phase 1 — Infrastructure Setup
-- [ ] Phase 2 — Docker Compose Configuration
-- [ ] Phase 3 — Snort IDS Container
-- [ ] Phase 4 — ML Model Container
-- [ ] Phase 5 — Web Dashboard Container
+- [ ] Phase 2 — Snort IDS (host install)
+- [ ] Phase 3 — Docker Compose Configuration
+- [ ] Phase 4 — ML Anomaly Detection Model
+- [ ] Phase 5 — Web Dashboard
 - [ ] Phase 6 — Integration & Testing
-- [ ] Phase 7 (Planned) — Redis Message Queue for high-traffic resilience
-- [ ] Phase 7 (Planned) — Threat Intelligence (IP reputation mapping)
-- [ ] Phase 7 (Planned) — Auto Response Engine (block IPs, trigger firewall rules)
-- [ ] Phase 7 (Planned) — CI/CD Pipeline with GitHub Actions
+- [ ] Phase 7 *(Planned)* — Redis Message Queue for high-traffic resilience
+- [ ] Phase 7 *(Planned)* — Threat Intelligence (IP reputation mapping)
+- [ ] Phase 7 *(Planned)* — Auto Response Engine (block IPs, trigger firewall rules)
+- [ ] Phase 7 *(Planned)* — CI/CD Pipeline with GitHub Actions
 
+---
+
+## 👥 Authors
+
+| Role | Name |
+|------|------|
+| Senior DevOps / Security Engineer | Mentor |
+| Junior Developer | Student |
+
+---
 
 ## 📄 License
 
