@@ -181,7 +181,7 @@ nids-project/
 
 | Requirement | Version | Check Command |
 |-------------|---------|---------------|
-| Ubuntu Server | 22.04 LTS | `lsb_release -a` |
+| Ubuntu Server | 24.04 LTS | `lsb_release -a` |
 | Docker CE | 24.x+ | `docker --version` |
 | Docker Compose | v2.x+ | `docker compose version` |
 | RAM | 8 GB recommended | `free -h` |
@@ -467,16 +467,6 @@ Copy `.env.example` to `.env` and fill in your values. **Never commit `.env` to 
 - [ ] Phase 7 (Planned) — Auto Response Engine (block IPs, trigger firewall rules)
 - [ ] Phase 7 (Planned) — CI/CD Pipeline with GitHub Actions
 
----
-
-## 👥 Authors
-
-| Role | Name |
-|------|------|
-| Senior DevOps / Security Engineer | Mentor |
-| Junior Developer | Student |
-
----
 
 ## 📄 License
 
