@@ -1,0 +1,91 @@
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - mpu-network
+
+  webgoat:
+    image: webgoat/webgoat
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    networks:
+      - mpu-network
+
+  backend:
+    build:
+      context: ./dashboard/backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+    depends_on:
+      - postgres
+    networks:
+      - mpu-network
+
+  frontend:
+    build:
+      context: ./dashboard/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - mpu-network
+
+  alerts_watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile.watcher
+    user: root
+    volumes:
+      - ./snort_logs:/app/snort_logs
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+    depends_on:
+      - postgres
+    networks:
+      - mpu-network
+    restart: unless-stopped
+
+  snort:
+    image: ciscotalos/snort3:latest
+    hostname: snort3
+    user: root
+    network_mode: host
+    privileged: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./snort_logs:/var/log/snort
+      - ./snort/snort.lua:/etc/snort/snort.lua
+      - ./snort/rules:/etc/snort/rules
+    entrypoint: ["/bin/sh", "-c", "/home/snorty/snort3/bin/snort -c /etc/snort/snort.lua -i wlp4s0 -l /var/log/snort"]
+    command: []
+volumes:
+  db_data:
+
+networks:
+  mpu-network:
+    driver: bridge
