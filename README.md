@@ -1,12 +1,12 @@
-# Snort IDS — Network Intrusion Detection System
+# Snort IDS — AI-Powered Network Intrusion Detection System
 
 Graduation Project — Security Engineering · DevOps
 
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=flat&logo=ubuntu&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat&logo=docker&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat&logo=python&logoColor=white)
-![MariaDB](https://img.shields.io/badge/MariaDB-10.x-003545?style=flat&logo=mariadb&logoColor=white)
-![Snort](https://img.shields.io/badge/Snort-2.9-FF0000?style=flat)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?style=flat&logo=postgresql&logoColor=white)
+![Snort](https://img.shields.io/badge/Snort-3.x-FF0000?style=flat)
 ![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?style=flat&logo=fastapi&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat)
@@ -33,9 +33,11 @@ Graduation Project — Security Engineering · DevOps
 
 ## Overview
 
-A full-stack Network Intrusion Detection System developed as a graduation project. The system uses **Snort 2.9** as the signature-based detection engine, with **Barnyard2** acting as the middleware that reads Snort's unified2 binary output and writes structured alerts into **MariaDB**. A **FastAPI** backend exposes the alert data to a **React** dashboard for real-time monitoring.
+A full-stack Network Intrusion Detection System developed as a two-semester graduation project. Semester 1 delivers a working detection and monitoring stack. Semester 2 will add a machine learning layer for anomaly detection.
 
-**WebGoat** runs as a deliberately vulnerable target application. Attacks are simulated from **Kali Linux** running in VirtualBox on the host machine.
+The system uses **Snort 3** (`ciscotalos/snort3`) as the signature-based detection engine running with host network access. A custom **alerts_watcher** Python service tails Snort's JSON alert output and writes structured events into **PostgreSQL**. A **FastAPI** backend exposes that data to a **React** dashboard for real-time monitoring.
+
+**WebGoat** runs as a deliberately vulnerable target application. Attacks are simulated from **Kali Linux** in VirtualBox on the host machine.
 
 ### Key Targets
 
@@ -56,9 +58,10 @@ Host Machine (Ubuntu 24.04 LTS)
           | Raw network traffic (host NIC)
           v
 +----------------------------------------------------------+
-|   Snort 2.9  (network_mode: host, privileged)            |
+|   Snort 3  (network_mode: host, privileged)              |
+|   Image: ciscotalos/snort3                               |
 |   Reads packets directly from host interface             |
-|   Outputs: unified2 binary log (/var/log/snort)          |
+|   Writes: alert_json.txt --> /var/log/snort              |
 +---------------------------+------------------------------+
                             | shared volume (snort_logs)
                             v
@@ -66,14 +69,14 @@ Host Machine (Ubuntu 24.04 LTS)
 |   Docker Compose Network (mpu-network bridge)            |
 |                                                          |
 |   +--------------------------------------------------+   |
-|   |   Barnyard2                                       |   |
-|   |   Reads unified2 logs from shared volume          |   |
-|   |   Writes structured alerts --> MariaDB            |   |
+|   |   alerts_watcher (Python)                         |   |
+|   |   Tails alert_json.txt from shared volume         |   |
+|   |   Parses JSON alerts --> writes to PostgreSQL     |   |
 |   +--------------------------------------------------+   |
 |                                                          |
 |   +------------------+    +-------------------------+    |
-|   |   MariaDB        |    |   WebGoat (attack target)|   |
-|   |   :3306 internal |    |   :8080 / :9090          |   |
+|   |   PostgreSQL     |    |   WebGoat               |    |
+|   |   :5432 internal |    |   :8080 / :9090         |    |
 |   +--------+---------+    +-------------------------+    |
 |            |                                             |
 |   +--------v---------+    +-------------------------+    |
@@ -84,7 +87,8 @@ Host Machine (Ubuntu 24.04 LTS)
 
 Attack Simulation:
   Kali Linux (VirtualBox) --> attacks --> WebGoat
-                          --> Snort detects --> Barnyard2 --> MariaDB --> Dashboard
+                          --> Snort detects --> alert_json.txt
+                          --> alerts_watcher --> PostgreSQL --> Dashboard
 ```
 
 ---
@@ -93,23 +97,19 @@ Attack Simulation:
 
 ### Why Snort with `network_mode: host`?
 
-Snort needs direct access to the physical network interface to capture every packet before any routing or NAT processing happens. Running it inside a Docker bridge network would make it invisible to host-level traffic. `network_mode: host` gives the container full visibility over the host NIC while keeping the rest of the stack isolated inside the bridge network.
+Snort needs direct access to the physical network interface to capture packets before any Docker NAT or bridge processing happens. Running it inside `mpu-network` would hide host-level traffic from it. `network_mode: host` gives the container full visibility over the host NIC while keeping every other service isolated inside the bridge network.
 
-### Why Snort 2.9 and not Snort 3?
+### Why a custom `alerts_watcher` instead of a database plugin?
 
-Barnyard2 has native, stable support for Snort 2.9's `unified2` output format. Snort 3 uses a different output pipeline that requires additional configuration to work with Barnyard2. For a graduation project focused on reliability and a clean integration story, Snort 2.9 is the correct choice.
+Snort 3 writes alerts as newline-delimited JSON to `alert_json.txt`. The `alerts_watcher` service tails that file from the last known position, parses each JSON line, and writes structured rows to PostgreSQL. This keeps Snort fully decoupled from the database — Snort never waits on a DB write, and the watcher can be restarted independently without losing alerts (it resumes from where it left off using a file position cursor).
 
-### Why Barnyard2?
+### Why PostgreSQL?
 
-Barnyard2 is the standard middleware between Snort and a database backend. Snort writes fast binary `unified2` logs to disk and continues processing packets without waiting for a database write. Barnyard2 handles the slower database insertion asynchronously. This keeps Snort's performance high even under heavy traffic.
-
-### Why MariaDB instead of PostgreSQL?
-
-Barnyard2's native database output plugin (`output database`) was built for MySQL/MariaDB. Using MariaDB eliminates the need for additional compatibility layers or custom plugins, keeping the pipeline straightforward and well-documented.
+PostgreSQL's native `INET` type stores IP addresses cleanly without casting hacks. The schema uses sequences, conflict handling, and timestamp casting that map naturally onto PostgreSQL features. It also gives the ML layer (Semester 2) a solid foundation for querying traffic patterns.
 
 ### Why WebGoat as the attack target?
 
-WebGoat is a purpose-built vulnerable application designed for security testing. It provides realistic, documented attack surfaces (SQL injection, XSS, CSRF, etc.) that generate meaningful Snort alerts without the legal and ethical complexity of targeting real systems.
+WebGoat is a purpose-built vulnerable application with documented attack surfaces (SQL injection, XSS, CSRF, and more). It generates realistic, repeatable traffic that produces meaningful Snort alerts without any legal or ethical complexity.
 
 ---
 
@@ -122,39 +122,39 @@ mpu-project01/
 ├── .env.example
 ├── .gitignore
 ├── README.md
+├── Dockerfile.watcher            # alerts_watcher container image
+├── alerts_watcher.py             # Tails alert_json.txt and writes to PostgreSQL
 │
 ├── database/
-│   └── init.sql                  # Schema — runs automatically on first MariaDB start
+│   └── init.sql                  # Schema — runs automatically on first PostgreSQL start
 │
-├── snort/                        # Snort config (container uses network_mode: host)
-│   ├── snort.conf
+├── snort/
+│   ├── snort.lua                 # Snort 3 configuration
 │   └── rules/
 │       └── local.rules
 │
-├── barnyard2/
-│   └── barnyard2.conf            # Barnyard2 config — points to MariaDB
-│
-├── snort_logs/                   # Shared volume between Snort and Barnyard2
-│   └── (unified2 binary logs written here by Snort, read by Barnyard2)
+├── snort_logs/                   # Shared volume: Snort writes here, alerts_watcher reads here
+│   └── alert_json.txt
 │
 └── dashboard/
     ├── backend/
     │   ├── Dockerfile
     │   ├── requirements.txt
     │   ├── main.py               # FastAPI app entrypoint
-    │   ├── database.py           # MariaDB connection and query helper
+    │   ├── database.py           # PostgreSQL connection and query helper
     │   └── routes/
-    │       ├── alerts.py         # /api/alerts/snort
+    │       ├── alerts.py         # /api/alerts/snort  /api/alerts/ml
     │       └── stats.py          # /api/stats/*
     └── frontend/
         ├── Dockerfile
         └── src/
             ├── App.js
             ├── api/
-            │   └── index.js      # Axios calls to FastAPI
+            │   └── index.js
             └── components/
                 ├── StatsCards.js
                 ├── SnortAlerts.js
+                ├── MLDetections.js
                 └── ProtocolChart.js
 ```
 
@@ -162,45 +162,45 @@ mpu-project01/
 
 ## Components
 
-### Snort 2.9 (Docker container — `network_mode: host`)
+### Snort 3 (`ciscotalos/snort3` — `network_mode: host`)
 
 - Runs with `network_mode: host` and `privileged: true` to access the host NIC directly
-- Signature-based detection engine — applies rules from `snort/rules/local.rules`
-- On match: writes alert to `unified2` binary log file in the shared `snort_logs` volume
-- Does not write to the database directly — that is Barnyard2's job
+- Signature-based detection engine using rules from `snort/rules/local.rules`
+- Config: `snort/snort.lua`
+- On rule match: appends a JSON object to `snort_logs/alert_json.txt`
+- Has no database dependency — writes only to the shared volume
 
-### Barnyard2 (Docker container — `mpu-network`)
+### alerts_watcher (Python — `mpu-network`)
 
-- Reads Snort's `unified2` output from the shared `snort_logs` volume
-- Parses binary alerts and writes structured records to MariaDB
-- Acts as a buffer: Snort stays fast, Barnyard2 handles the slower DB writes
-- Reconnects automatically if MariaDB is temporarily unavailable
+- Tails `alert_json.txt` using a file position cursor (survives restarts)
+- Parses each JSON line and extracts: `sid`, `gid`, `rev`, `msg`, `priority`, `proto`, `src_addr`, `dst_addr`, `src_port`, `dst_port`, `timestamp`
+- Writes one row to `signature` and one row to `event` per alert
+- Updates the `statistics` table counters (`total_snort_alerts`, `high_threats`, `medium_threats`) on every insert
+- Polls every 1 second with `restart: unless-stopped`
 
-### MariaDB (Docker container — `mpu-network`)
+### PostgreSQL 15 (`mpu-network`)
 
-- Persistent storage for all Snort alerts
-- Port 3306 — internal only, never exposed outside the Docker network
+- Persistent storage for Snort alerts and (future) ML detections
+- Port 5432 — internal only, never exposed outside the Docker network
 - Schema initialized automatically from `database/init.sql` on first start
-- Volume: `db_data:/var/lib/mysql`
+- Volume: `db_data:/var/lib/postgresql/data`
 
-### FastAPI Backend (Docker container — `mpu-network`)
+### FastAPI Backend (`mpu-network`)
 
-- REST API that reads alerts from MariaDB and serves them to the React frontend
+- REST API that reads from PostgreSQL and serves the React frontend
 - Port 8000 — exposed for browser access
-- Auto-generated documentation at `/docs`
-- Connects to MariaDB using `pymysql`
+- Auto-generated API documentation at `/docs`
 
-### React Frontend (Docker container — `mpu-network`)
+### React Frontend (`mpu-network`)
 
-- Real-time dashboard that polls the FastAPI backend every 30 seconds
+- Real-time dashboard polling FastAPI every 30 seconds
 - Port 3000 — accessible from browser
-- Displays: stats cards, Snort alerts table, protocol distribution chart
+- Displays: stats cards, Snort alerts table, ML detections table (Semester 2), protocol distribution chart
 
-### WebGoat (Docker container — `mpu-network`)
+### WebGoat (`mpu-network`)
 
-- Deliberately vulnerable Java web application
-- Serves as the attack target for Kali Linux simulations
-- Port 8080 / 9090
+- Deliberately vulnerable Java web application — attack simulation target
+- Ports 8080 and 9090
 
 ---
 
@@ -235,11 +235,11 @@ docker compose up -d
 # 5. Verify everything is running
 docker compose ps
 
-# 6. Check Snort logs
-docker compose logs snort
+# 6. Tail Snort alerts in real time
+docker compose logs -f snort
 
-# 7. Check Barnyard2 is writing to MariaDB
-docker compose logs barnyard2
+# 7. Watch alerts_watcher insert events
+docker compose logs -f alerts_watcher
 
 # 8. Open the dashboard
 # http://localhost:3000
@@ -252,54 +252,62 @@ docker compose logs barnyard2
 
 ## Database Schema
 
-The schema is initialized automatically from `database/init.sql` when MariaDB starts for the first time. It follows the standard Barnyard2 schema with an additional `statistics` table for the dashboard.
+Initialized automatically from `database/init.sql` on first PostgreSQL start.
 
 ```sql
--- Barnyard2 standard tables
+-- Auto-incrementing counter for event IDs
+CREATE SEQUENCE IF NOT EXISTS event_cid_seq START 1;
+
+-- One row per detected event
 CREATE TABLE IF NOT EXISTS event (
-    sid           INT UNSIGNED NOT NULL,
-    cid           INT UNSIGNED NOT NULL,
-    signature     INT UNSIGNED NOT NULL,
-    timestamp     DATETIME NOT NULL,
+    sid           INT NOT NULL,
+    cid           INT NOT NULL DEFAULT nextval('event_cid_seq'),
+    signature     TEXT,
+    signature_gen INT,
+    signature_id  INT,
+    signature_rev INT,
+    timestamp     TIMESTAMP NOT NULL,
+    ip_src        INET,
+    ip_dst        INET,
+    layer4_sport  INT,
+    layer4_dport  INT,
+    ip_proto      INT,
+    priority      INT,
+    class_id      INT,
     PRIMARY KEY (sid, cid)
 );
 
+-- One row per unique Snort rule that has fired
 CREATE TABLE IF NOT EXISTS signature (
-    sig_id        INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    sig_name      TEXT NOT NULL,
-    sig_class_id  INT UNSIGNED,
-    sig_priority  INT UNSIGNED,
-    sig_rev       INT UNSIGNED,
-    sig_sid       INT UNSIGNED,
-    sig_gid       INT UNSIGNED,
-    PRIMARY KEY (sig_id)
+    sig_id       SERIAL PRIMARY KEY,
+    sig_name     TEXT,
+    sig_class_id INT,
+    sig_priority INT,
+    sig_rev      INT,
+    sig_sid      INT UNIQUE
 );
 
-CREATE TABLE IF NOT EXISTS iphdr (
-    sid           INT UNSIGNED NOT NULL,
-    cid           INT UNSIGNED NOT NULL,
-    ip_src        INT UNSIGNED NOT NULL,
-    ip_dst        INT UNSIGNED NOT NULL,
-    ip_proto      TINYINT UNSIGNED NOT NULL,
-    PRIMARY KEY (sid, cid)
+-- Reserved for ML anomaly detections (Semester 2)
+CREATE TABLE IF NOT EXISTS ml_alerts (
+    id            SERIAL PRIMARY KEY,
+    timestamp     TIMESTAMP NOT NULL,
+    src_ip        INET NOT NULL,
+    dst_ip        INET NOT NULL,
+    protocol      TEXT,
+    anomaly_score FLOAT,
+    confidence    FLOAT,
+    verdict       TEXT,
+    created_at    TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS tcphdr (
-    sid           INT UNSIGNED NOT NULL,
-    cid           INT UNSIGNED NOT NULL,
-    tcp_sport     SMALLINT UNSIGNED NOT NULL,
-    tcp_dport     SMALLINT UNSIGNED NOT NULL,
-    PRIMARY KEY (sid, cid)
-);
-
--- Dashboard statistics table
+-- Aggregated counters for the dashboard stats cards
 CREATE TABLE IF NOT EXISTS statistics (
-    id                 INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    total_snort_alerts INT UNSIGNED DEFAULT 0,
-    high_threats       INT UNSIGNED DEFAULT 0,
-    medium_threats     INT UNSIGNED DEFAULT 0,
-    updated_at         DATETIME DEFAULT NOW(),
-    PRIMARY KEY (id)
+    id                 SERIAL PRIMARY KEY,
+    total_snort_alerts INT DEFAULT 0,
+    total_ml_alerts    INT DEFAULT 0,
+    high_threats       INT DEFAULT 0,
+    medium_threats     INT DEFAULT 0,
+    updated_at         TIMESTAMP DEFAULT NOW()
 );
 ```
 
@@ -307,36 +315,38 @@ CREATE TABLE IF NOT EXISTS statistics (
 
 ## Environment Variables
 
-| Variable          | Description          | Default  |
-| ----------------- | -------------------- | -------- |
-| `DB_NAME`         | MariaDB database name | `mpu_db` |
-| `DB_USER`         | MariaDB username      | `mpu`    |
-| `DB_PASSWORD`     | MariaDB user password | `123`    |
-| `DB_ROOT_PASSWORD`| MariaDB root password | `root`   |
+| Variable           | Description              | Default  |
+| ------------------ | ------------------------ | -------- |
+| `DB_NAME`          | PostgreSQL database name | `mpu_db` |
+| `DB_USER`          | PostgreSQL username      | `mpu`    |
+| `DB_PASSWORD`      | PostgreSQL user password | `123`    |
+| `DB_ROOT_PASSWORD` | PostgreSQL root password | `root`   |
 
 Copy `.env.example` to `.env`. Never commit `.env` to git.
 
-> **Note:** These credentials are intentionally simple as per university project requirements.
+> **Note:** Credentials are intentionally simple as per university project requirements.
 
 ---
 
 ## API Endpoints
 
-| Method | Endpoint                  | Description                        |
-| ------ | ------------------------- | ---------------------------------- |
-| GET    | `/api/alerts/snort`       | Latest Snort alerts (default: 50)  |
-| GET    | `/api/stats/summary`      | Total alerts, high/medium counts   |
-| GET    | `/api/stats/by-protocol`  | Alert count grouped by protocol    |
-| GET    | `/api/stats/by-priority`  | Alert count grouped by priority    |
-| GET    | `/api/stats/timeline`     | Alert count per hour (last 24h)    |
-| GET    | `/docs`                   | Auto-generated API documentation   |
+| Method | Endpoint                 | Description                           |
+| ------ | ------------------------ | ------------------------------------- |
+| GET    | `/api/alerts/snort`      | Latest Snort alerts (default: 50)     |
+| GET    | `/api/alerts/ml`         | Latest ML detections (Semester 2)     |
+| GET    | `/api/alerts/ml/threats` | ML detections where verdict != normal |
+| GET    | `/api/stats/summary`     | Total alerts, high/medium counts      |
+| GET    | `/api/stats/by-protocol` | Alert count grouped by protocol       |
+| GET    | `/api/stats/by-priority` | Alert count grouped by priority       |
+| GET    | `/api/stats/timeline`    | Alert count per hour (last 24h)       |
+| GET    | `/docs`                  | Auto-generated API documentation      |
 
 ---
 
 ## Security Notes
 
 - Snort runs with `privileged: true` and `network_mode: host` — required for packet capture
-- MariaDB port 3306 is never exposed outside the Docker network
+- PostgreSQL port 5432 is never exposed outside the Docker network
 - `.env` is excluded from git via `.gitignore`
 - WebGoat is intentionally vulnerable — do not expose it to public networks
 - Run this system on an isolated lab network or VM environment only
@@ -346,12 +356,12 @@ Copy `.env.example` to `.env`. Never commit `.env` to git.
 ## Roadmap
 
 **Semester 1 — Current**
-- [x] Snort 2.9 containerized with host network access
-- [x] Barnyard2 middleware writing to MariaDB
+- [x] Snort 3 containerized with host network access
+- [x] alerts_watcher Python service writing to PostgreSQL
 - [x] FastAPI backend with alert and stats endpoints
 - [x] React dashboard with live data refresh
 - [x] WebGoat as attack simulation target
-- [ ] Full end-to-end integration test with Kali Linux attack scenarios
+- [ ] End-to-end integration test with Kali Linux attack scenarios
 
 **Semester 2 — Planned**
 - [ ] ML anomaly detection layer (Isolation Forest + Random Forest on UNSW-NB15)
