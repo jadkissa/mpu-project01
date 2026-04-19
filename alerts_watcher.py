@@ -5,7 +5,7 @@ import os
 import time
 import json
 import psycopg2
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 ALERTS_DIR = "./snort_logs"
 ALERT_FILE = os.path.join(ALERTS_DIR, "alert_json.txt")
@@ -17,6 +17,9 @@ DB_CONFIG = {
     "host": os.getenv("DB_HOST", "postgres"),
     "port": int(os.getenv("DB_PORT", 5432))
 }
+
+# Define UTC+3 timezone (Damascus)
+UTC_PLUS_3 = timezone(timedelta(hours=3))
 
 file_position = 0
 
@@ -51,6 +54,27 @@ def process_new_lines():
         print(f"Error reading file: {e}")
 
 
+def convert_to_utc_plus_3(timestamp_str):
+    """Convert Snort timestamp (UTC) to UTC+3 (Damascus time)"""
+    try:
+        # Parse Snort timestamp format: "04/19-08:53:41.975661"
+        ts = datetime.strptime(timestamp_str, "%m/%d-%H:%M:%S.%f")
+        ts = ts.replace(year=datetime.now().year)
+        
+        # Make it timezone-aware as UTC
+        ts_utc = ts.replace(tzinfo=timezone.utc)
+        
+        # Convert to UTC+3
+        ts_damascus = ts_utc.astimezone(UTC_PLUS_3)
+        
+        # Return as string without timezone info for database
+        return ts_damascus.strftime("%Y-%m-%d %H:%M:%S.%f")
+    except Exception as e:
+        print(f"Error converting timestamp {timestamp_str}: {e}")
+        # Fallback to current time in UTC+3
+        return datetime.now(UTC_PLUS_3).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
 def insert_to_db(alerts):
     try:
         conn = psycopg2.connect(**DB_CONFIG)
@@ -69,14 +93,10 @@ def insert_to_db(alerts):
                 dst_ip    = alert.get("dst_addr", "0.0.0.0")
                 src_port  = alert.get("src_port", 0)
                 dst_port  = alert.get("dst_port", 0)
-                timestamp = alert.get("timestamp", "")
-
-                try:
-                    ts = datetime.strptime(timestamp, "%m/%d-%H:%M:%S.%f")
-                    ts = ts.replace(year=datetime.now().year)
-                    timestamp = ts.strftime("%Y-%m-%d %H:%M:%S.%f")
-                except Exception:
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                timestamp_raw = alert.get("timestamp", "")
+                
+                # Convert timestamp to UTC+3
+                timestamp = convert_to_utc_plus_3(timestamp_raw)
 
                 proto_map = {"tcp": 6, "udp": 17, "icmp": 1}
                 proto_num = proto_map.get(str(proto).lower(), 0)
@@ -108,7 +128,7 @@ def insert_to_db(alerts):
                         total_snort_alerts = total_snort_alerts + 1,
                         high_threats   = high_threats   + CASE WHEN %s = 1 THEN 1 ELSE 0 END,
                         medium_threats = medium_threats + CASE WHEN %s = 2 THEN 1 ELSE 0 END,
-                        updated_at = NOW()
+                        updated_at = NOW() AT TIME ZONE 'Asia/Damascus'
                     WHERE id = 1
                 """, (priority, priority))
 
@@ -124,14 +144,16 @@ def insert_to_db(alerts):
         conn.close()
 
         if inserted > 0:
-            print(f"Inserted {inserted} alerts")
+            print(f"Inserted {inserted} alerts at {datetime.now(UTC_PLUS_3).strftime('%Y-%m-%d %H:%M:%S')} (UTC+3)")
 
     except Exception as e:
         print(f"DB connection error: {e}")
 
 
 if __name__ == "__main__":
-    print("Monitoring ./snort_logs for Snort 3 JSON alerts...")
+    print(f"Monitoring ./snort_logs for Snort 3 JSON alerts...")
+    print(f"Converting all timestamps to UTC+3 (Damascus time)")
+    print(f"Current UTC+3 time: {datetime.now(UTC_PLUS_3).strftime('%Y-%m-%d %H:%M:%S')}")
 
     if os.path.exists(ALERT_FILE):
         with open(ALERT_FILE, "r") as f:

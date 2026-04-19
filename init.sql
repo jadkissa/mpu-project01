@@ -1,4 +1,6 @@
 -- init.sql
+-- Set timezone for the session
+SET TIMEZONE = 'Asia/Damascus';
 
 CREATE SEQUENCE IF NOT EXISTS event_cid_seq START 1;
 
@@ -9,7 +11,7 @@ CREATE TABLE IF NOT EXISTS event (
     signature_gen   INT,
     signature_id    INT,
     signature_rev   INT,
-    timestamp       TIMESTAMP NOT NULL,
+    timestamp       TIMESTAMPTZ NOT NULL,
     ip_src          INET,
     ip_dst          INET,
     layer4_sport    INT,
@@ -38,14 +40,14 @@ CREATE TABLE IF NOT EXISTS signature (
 
 CREATE TABLE IF NOT EXISTS ml_alerts (
     id              SERIAL PRIMARY KEY,
-    timestamp       TIMESTAMP NOT NULL,
+    timestamp       TIMESTAMPTZ NOT NULL,
     src_ip          INET NOT NULL,
     dst_ip          INET NOT NULL,
     protocol        TEXT,
     anomaly_score   FLOAT,
     confidence      FLOAT,
     verdict         TEXT,
-    created_at      TIMESTAMP DEFAULT NOW()
+    created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS statistics (
@@ -54,8 +56,11 @@ CREATE TABLE IF NOT EXISTS statistics (
     total_ml_alerts     INT DEFAULT 0,
     high_threats        INT DEFAULT 0,
     medium_threats      INT DEFAULT 0,
-    updated_at          TIMESTAMP DEFAULT NOW()
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Set database timezone to Damascus
+ALTER DATABASE mpu_db SET timezone TO 'Asia/Damascus';
 
 INSERT INTO sensor (sid, hostname, interface, filter)
 VALUES (1, 'snort-sensor', 'eth0', NULL)
