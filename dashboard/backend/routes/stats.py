@@ -5,15 +5,21 @@ router = APIRouter()
 
 @router.get("/summary")
 def get_summary():
-    stats = query("SELECT * FROM statistics WHERE id = 1")
-    if not stats:
+    rows = query("""
+        SELECT
+            (SELECT COUNT(*) FROM event) AS total_snort_alerts,
+            (SELECT COUNT(*) FROM ml_alerts) AS total_ml_alerts,
+            (SELECT COUNT(*) FROM ml_alerts WHERE verdict = 'HIGH_THREAT') AS high_threats,
+            (SELECT COUNT(*) FROM ml_alerts WHERE verdict = 'MEDIUM_THREAT') AS medium_threats
+    """)
+    if not rows:
         return {
             "total_snort_alerts": 0,
             "total_ml_alerts": 0,
             "high_threats": 0,
             "medium_threats": 0
         }
-    return stats[0]
+    return rows[0]
 
 @router.get("/by-protocol")
 def get_by_protocol():
