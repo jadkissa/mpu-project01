@@ -38,22 +38,9 @@ CREATE TABLE IF NOT EXISTS signature (
     sig_sid         INT UNIQUE
 );
 
-CREATE TABLE IF NOT EXISTS ml_alerts (
-    id              SERIAL PRIMARY KEY,
-    timestamp       TIMESTAMPTZ NOT NULL,
-    src_ip          INET NOT NULL,
-    dst_ip          INET NOT NULL,
-    protocol        TEXT,
-    anomaly_score   FLOAT,
-    confidence      FLOAT,
-    verdict         TEXT,
-    created_at      TIMESTAMPTZ DEFAULT NOW()
-);
-
 CREATE TABLE IF NOT EXISTS statistics (
     id                  SERIAL PRIMARY KEY,
     total_snort_alerts  INT DEFAULT 0,
-    total_ml_alerts     INT DEFAULT 0,
     high_threats        INT DEFAULT 0,
     medium_threats      INT DEFAULT 0,
     updated_at          TIMESTAMPTZ DEFAULT NOW()
@@ -66,6 +53,6 @@ INSERT INTO sensor (sid, hostname, interface, filter)
 VALUES (1, 'snort-sensor', 'eth0', NULL)
 ON CONFLICT (sid) DO NOTHING;
 
-INSERT INTO statistics (id, total_snort_alerts, total_ml_alerts, high_threats, medium_threats)
-VALUES (1, 0, 0, 0, 0)
+INSERT INTO statistics (id, total_snort_alerts, high_threats, medium_threats)
+VALUES (1, 0, 0, 0)
 ON CONFLICT (id) DO NOTHING;

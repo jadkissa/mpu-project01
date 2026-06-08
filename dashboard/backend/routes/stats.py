@@ -1,3 +1,4 @@
+# stats.py
 from fastapi import APIRouter
 from database import query
 
@@ -8,14 +9,12 @@ def get_summary():
     rows = query("""
         SELECT
             (SELECT COUNT(*) FROM event) AS total_snort_alerts,
-            (SELECT COUNT(*) FROM ml_alerts) AS total_ml_alerts,
-            (SELECT COUNT(*) FROM ml_alerts WHERE verdict = 'HIGH_THREAT') AS high_threats,
-            (SELECT COUNT(*) FROM ml_alerts WHERE verdict = 'MEDIUM_THREAT') AS medium_threats
+            (SELECT COUNT(*) FROM event WHERE priority = 1) AS high_threats,
+            (SELECT COUNT(*) FROM event WHERE priority = 2) AS medium_threats
     """)
     if not rows:
         return {
             "total_snort_alerts": 0,
-            "total_ml_alerts": 0,
             "high_threats": 0,
             "medium_threats": 0
         }

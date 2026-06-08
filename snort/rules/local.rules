@@ -1,3 +1,61 @@
-alert tcp any any -> any 8080 (msg:"WebGoat Access Attempt"; sid:1000004; rev:1;)
-alert tcp any any -> any 8080 (msg:"Possible SQL Injection"; content:"' OR"; sid:1000005; rev:1;)
-alert tcp any any -> any 8080 (msg:"Possible XSS Attempt"; content:"<script>"; sid:1000006; rev:1;)
+# SYN Flood - High
+alert tcp any any -> $HOME_NET 8080,9090,8000,3000,5432,5678 (
+    msg:"SYN Flood Attack on MPU Project Ports";
+    flags:S;
+    priority:1;
+    detection_filter: track by_src, count 200, seconds 10;
+    sid:1000006; rev:5;
+)
+
+# Port Scan - Medium
+alert tcp any any -> $HOME_NET 8080,9090,8000,3000,5432,5678 (
+    msg:"Port Scan on MPU Project Ports";
+    flags:S;
+    priority:2;
+    detection_filter: track by_src, count 30, seconds 5;
+    sid:1000020; rev:5;
+)
+
+# Brute Force WebGoat - High
+alert tcp any any -> $HOME_NET 8080 (
+    msg:"WebGoat Brute Force Attempt";
+    flags:S;
+    priority:1;
+    detection_filter: track by_src, count 20, seconds 60;
+    sid:1000031; rev:4;
+)
+
+# Brute Force PostgreSQL - High
+alert tcp any any -> $HOME_NET 5432 (
+    msg:"PostgreSQL Brute Force Attempt";
+    flags:S;
+    priority:1;
+    detection_filter: track by_src, count 20, seconds 60;
+    sid:1000030; rev:4;
+)
+
+# UDP Scan - Medium
+alert udp any any -> $HOME_NET 8080,9090,8000,3000,5432,5678 (
+    msg:"UDP Scan on MPU Project Ports";
+    priority:2;
+    detection_filter: track by_src, count 30, seconds 5;
+    sid:1000021; rev:5;
+)
+
+# n8n Access - Medium
+alert tcp any any -> $HOME_NET 5678 (
+    msg:"Unauthorized n8n Access Attempt";
+    flags:S;
+    priority:2;
+    detection_filter: track by_src, count 10, seconds 60;
+    sid:1000032; rev:4;
+)
+
+# Admin API - Medium
+alert tcp any any -> $HOME_NET 8000 (
+    msg:"Suspicious Admin API Access";
+    flow:to_server,established;
+    content:"/admin";
+    priority:2;
+    sid:1000033; rev:4;
+)

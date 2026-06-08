@@ -1,0 +1,6 @@
+docker compose exec postgres psql -U mpu -d mpu_db \
+  -c "TRUNCATE TABLE event RESTART IDENTITY CASCADE;"
+  
+  
+  docker compose logs ml_engine -f
+

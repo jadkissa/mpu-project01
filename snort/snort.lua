@@ -1,4 +1,16 @@
--- /home/jad/Desktop/mpu01/snort/snort.lua
+-- rules
+ips = {
+    include = '/etc/snort/rules/local.rules',
+    variables = {
+        nets = {
+            HOME_NET = '172.20.10.0/28',
+            EXTERNAL_NET = '!$HOME_NET',
+        },
+        ports = {
+            HTTP_PORTS = '8080',
+        }
+    }
+}
 
 -- detection engine
 detection = {
@@ -12,7 +24,4 @@ alert_json = {
     fields = 'timestamp src_addr dst_addr src_port dst_port proto gid sid rev msg priority class',
 }
 
--- rules
-ips = {
-    include = '/etc/snort/rules/local.rules',
-}
+http_inspect = {}

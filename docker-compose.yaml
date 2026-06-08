@@ -96,36 +96,14 @@ services:
       - GENERIC_TIMEZONE=Asia/Damascus
       - TZ=Asia/Damascus
     volumes:
-      - n8n_data:/home/node/.n8n
+      - ./n8n_data:/home/node/.n8n
     depends_on:
       - postgres
     networks:
       - mpu-network
     restart: unless-stopped
-
-  ml_engine:
-    build:
-      context: ./ml_engine
-      dockerfile: Dockerfile
-    network_mode: host
-    privileged: true
-    environment:
-      - INTERFACE=wlp4s0
-      - DB_NAME=${DB_NAME}
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_HOST=localhost
-      - DB_PORT=5432
-      - TRAINING_TIME=900
-    volumes:
-      - ./ml_engine/models:/app/models
-    depends_on:
-      - postgres
-    restart: unless-stopped
-
 volumes:
   db_data:
-  n8n_data:
 
 networks:
   mpu-network:
