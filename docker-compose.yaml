@@ -12,7 +12,8 @@ services:
       - db_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
-      - mpu-network
+      mpu-network:
+        ipv4_address: 172.28.0.105
 
   webgoat:
     image: webgoat/webgoat
@@ -20,7 +21,8 @@ services:
       - "8080:8080"
       - "9090:9090"
     networks:
-      - mpu-network
+      mpu-network:
+        ipv4_address: 172.28.0.104
 
   backend:
     build:
@@ -37,7 +39,8 @@ services:
     depends_on:
       - postgres
     networks:
-      - mpu-network
+      mpu-network:
+        ipv4_address: 172.28.0.103
 
   frontend:
     build:
@@ -48,7 +51,8 @@ services:
     depends_on:
       - backend
     networks:
-      - mpu-network
+      mpu-network:
+        ipv4_address: 172.28.0.102
 
   alerts_watcher:
     build:
@@ -67,7 +71,8 @@ services:
     depends_on:
       - postgres
     networks:
-      - mpu-network
+      mpu-network:
+        ipv4_address: 172.28.0.101
     restart: unless-stopped
 
   snort:
@@ -82,7 +87,8 @@ services:
       - ./snort_logs:/var/log/snort
       - ./snort/snort.lua:/etc/snort/snort.lua
       - ./snort/rules:/etc/snort/rules
-    entrypoint: ["/bin/sh", "-c", "/home/snorty/snort3/bin/snort -c /etc/snort/snort.lua -i wlp4s0 -l /var/log/snort"]
+      - ./snort/entrypoint.sh:/entrypoint.sh
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     command: []
 
   n8n:
@@ -100,7 +106,8 @@ services:
     depends_on:
       - postgres
     networks:
-      - mpu-network
+      mpu-network:
+        ipv4_address: 172.28.0.100
     restart: unless-stopped
 volumes:
   db_data:
@@ -108,3 +115,7 @@ volumes:
 networks:
   mpu-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1
