@@ -1,4 +1,4 @@
-# Snort IDS — AI-Powered Network Intrusion Detection System
+# NIDS — Network Intrusion Detection System
 
 Graduation Project — Security Engineering · DevOps
 
@@ -9,7 +9,7 @@ Graduation Project — Security Engineering · DevOps
 ![Snort](https://img.shields.io/badge/Snort-3.x-FF0000?style=flat)
 ![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?style=flat&logo=fastapi&logoColor=white)
-![n8n](https://img.shields.io/badge/n8n-2.16-EA4B71?style=flat&logo=n8n&logoColor=white)
+![n8n](https://img.shields.io/badge/n8n-latest-EA4B71?style=flat&logo=n8n&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat)
 
 ---
@@ -26,8 +26,7 @@ Graduation Project — Security Engineering · DevOps
 - [Database Schema](#database-schema)
 - [Environment Variables](#environment-variables)
 - [API Endpoints](#api-endpoints)
-- [ML Engine](#ml-engine)
-- [Alerting with n8n](#alerting-with-n8n)
+- [Telegram Alerting with n8n](#telegram-alerting-with-n8n)
 - [Security Notes](#security-notes)
 - [Roadmap](#roadmap)
 - [Authors](#authors)
@@ -36,11 +35,9 @@ Graduation Project — Security Engineering · DevOps
 
 ## Overview
 
-A full-stack Network Intrusion Detection System developed as a two-semester graduation project. The system combines **signature-based detection** (Snort 3) with **unsupervised machine learning** (Isolation Forest) for two-layer threat detection, real-time monitoring, and automated Telegram alerting via n8n.
+A full-stack Network Intrusion Detection System developed as a graduation project. The system uses **Snort 3** for signature-based detection, a custom **alerts_watcher** service to persist alerts into **PostgreSQL**, a **FastAPI** backend, a **React** dashboard for real-time monitoring, and **n8n** for automated Telegram alerting.
 
-**Snort 3** handles known attacks via rules. The **ML engine** monitors raw network traffic, learns normal behavior, and flags anomalies that Snort's rules miss — such as DDoS floods, slow scans, and unknown attack patterns. **n8n** listens to PostgreSQL triggers and sends instant Telegram notifications when either layer detects a threat.
-
-**WebGoat** runs as a deliberately vulnerable target application. Attacks are simulated from **Kali Linux** in VirtualBox (Bridged network mode) on the host machine.
+**WebGoat** runs as a deliberately vulnerable target application. Attacks are simulated from **Kali Linux** running in VirtualBox with a Bridged network adapter.
 
 ### Key Targets
 
@@ -58,89 +55,58 @@ A full-stack Network Intrusion Detection System developed as a two-semester grad
 ```
 Host Machine (Ubuntu 24.04 LTS)
           |
-          | Raw network traffic (host NIC: wlp4s0)
+          | Raw network traffic (host NIC)
           |
-          +------------------+------------------+
-          |                                     |
-          v                                     v
-+----------------------+           +------------------------+
-|   Snort 3            |           |   ML Engine (Python)   |
-|   network_mode: host |           |   network_mode: host   |
-|   Signature-based    |           |   Isolation Forest     |
-|   detection          |           |   Anomaly detection    |
-|   --> alert_json.txt |           |   Checks event table   |
-+----------+-----------+           |   before alerting      |
-           |                       +----------+-------------+
-           | shared volume                    |
-           v                                  |
+          v
++----------------------+
+|   Snort 3            |
+|   network_mode: host |
+|   Signature-based    |
+|   detection          |
+|   --> alert_json.txt |
++----------+-----------+
+           |
+           | shared volume (snort_logs/)
+           v
 +----------------------------------------------------------+
-|   Docker Compose Network (mpu-network bridge)            |
+|   Docker Compose Network (mpu-network 172.28.0.0/16)     |
 |                                                          |
 |   +--------------------------------------------------+   |
-|   |   alerts_watcher (Python)                        |   |
-|   |   Tails alert_json.txt --> writes to PostgreSQL  |   |
+|   |   alerts_watcher        172.28.0.101             |   |
+|   |   Tails alert_json.txt  -->  PostgreSQL           |   |
 |   +--------------------------------------------------+   |
 |                                                          |
-|   +------------------+    +-------------------------+    |
-|   |   PostgreSQL 15  |<---+   ML Engine inserts     |    |
-|   |   event table    |    |   into ml_alerts        |    |
-|   |   ml_alerts table|    +-------------------------+    |
+|   +------------------+                                   |
+|   |   PostgreSQL 15  |  172.28.0.105                     |
+|   |   event table    |                                   |
+|   |   NOTIFY trigger |                                   |
 |   +--------+---------+                                   |
-|            |  LISTEN/NOTIFY triggers                     |
+|            |                                             |
+|            | LISTEN/NOTIFY (channel: new_event)          |
 |            v                                             |
-|   +------------------+    +-------------------------+    |
-|   |   n8n            |    |   FastAPI Backend       |    |
-|   |   Workflow engine|    |   :8000                 |    |
-|   |   Telegram alerts|    +----------+--------------+    |
-|   +------------------+               |                   |
-|                                      v                   |
-|                           +----------+--------------+    |
-|                           |   React Frontend        |    |
-|                           |   :3000                 |    |
-|                           +-------------------------+    |
+|   +------------------+                                   |
+|   |   n8n            |  172.28.0.100                     |
+|   |   Telegram alerts|                                   |
+|   +------------------+                                   |
+|                                                          |
+|   +-------------------------+                            |
+|   |   FastAPI Backend       |  172.28.0.103  :8000       |
+|   +----------+--------------+                            |
+|              |                                           |
+|              v                                           |
+|   +----------+--------------+                            |
+|   |   React Frontend        |  172.28.0.102  :3000       |
+|   +-------------------------+                            |
 |                                                          |
 |   +--------------------------------------------------+   |
-|   |   WebGoat — Vulnerable target app                |   |
-|   |   :8080 / :9090                                  |   |
+|   |   WebGoat               172.28.0.104  :8080/:9090 |  |
 |   +--------------------------------------------------+   |
 +----------------------------------------------------------+
 
 Attack Simulation:
   Kali Linux (VirtualBox, Bridged) --> attacks --> Host / WebGoat
-  Snort detects known attacks      --> event table --> Dashboard + Telegram
-  ML detects unknown anomalies     --> ml_alerts table --> Dashboard + Telegram
+  Snort detects attacks --> event table --> Dashboard + Telegram
 ```
-
----
-
-## Two-Layer Detection Logic
-
-The system uses a deliberate separation between the two detection layers:
-
-```
-New network traffic
-        |
-        v
-Snort checks rules
-        |
-   Detected? ----YES----> event table --> Telegram (Snort alert)
-        |
-        NO
-        |
-        v
-ML Engine analyzes flow
-        |
-   Anomaly? ----YES----> Check event table (was it already caught by Snort?)
-                              |
-                         Already there? --> SKIP (avoid duplicate alerts)
-                              |
-                              NO
-                              |
-                              v
-                         ml_alerts table --> Telegram (ML alert)
-```
-
-This ensures Snort handles known threats efficiently, while the ML layer focuses exclusively on what Snort missed.
 
 ---
 
@@ -148,23 +114,19 @@ This ensures Snort handles known threats efficiently, while the ML layer focuses
 
 ### Why Snort with `network_mode: host`?
 
-Snort needs direct access to the physical network interface to capture packets before any Docker NAT or bridge processing happens. `network_mode: host` gives the container full visibility over the host NIC while keeping every other service isolated inside the bridge network.
+Snort needs direct access to the physical network interface to capture packets before any Docker NAT or bridge processing occurs. `network_mode: host` gives the container full visibility over the host NIC while every other service remains isolated inside the bridge network.
 
-### Why a custom `alerts_watcher` instead of a database plugin?
+### Why a custom `alerts_watcher` instead of a database output plugin?
 
-Snort 3 writes alerts as newline-delimited JSON to `alert_json.txt`. The `alerts_watcher` service tails that file from the last known position, parses each JSON line, and writes structured rows to PostgreSQL. This keeps Snort fully decoupled from the database — Snort never waits on a DB write, and the watcher can be restarted independently without losing alerts.
-
-### Why Isolation Forest for anomaly detection?
-
-Isolation Forest is an unsupervised algorithm — it requires no labeled attack data. It learns what "normal" traffic looks like during a training phase, then flags anything that deviates significantly. This is ideal for detecting unknown or novel attacks that signature-based systems like Snort miss.
+Snort 3 writes alerts as newline-delimited JSON to `alert_json.txt`. The `alerts_watcher` service tails that file from the last known position, parses each JSON line, and writes structured rows to PostgreSQL. This keeps Snort fully decoupled from the database — Snort never waits on a database write, and the watcher can be restarted independently without dropping alerts.
 
 ### Why n8n for alerting instead of custom code?
 
-n8n uses PostgreSQL's native `LISTEN/NOTIFY` mechanism via Postgres Trigger nodes. This means alerts fire instantly the moment a row is inserted — no polling delay. The visual workflow editor also makes it easy to extend alerting to Slack, email, or webhooks without touching application code.
+n8n listens to PostgreSQL's native `LISTEN/NOTIFY` channel, which means notifications fire the moment a row is inserted — no polling delay. The visual workflow editor also makes it straightforward to extend alerting to other channels (Slack, email, webhooks) without modifying application code.
 
 ### Why PostgreSQL?
 
-PostgreSQL's native `INET` type stores IP addresses cleanly. The `LISTEN/NOTIFY` feature enables real-time triggers for n8n. It also gives the ML layer a solid foundation for querying traffic patterns and flow aggregation.
+PostgreSQL's native `INET` type stores IP addresses cleanly and efficiently. The `LISTEN/NOTIFY` mechanism enables real-time push notifications to n8n without any polling overhead. The fixed subnet (`172.28.0.0/16`) with static IPs for each service ensures predictable inter-container communication.
 
 ---
 
@@ -173,6 +135,7 @@ PostgreSQL's native `INET` type stores IP addresses cleanly. The `LISTEN/NOTIFY`
 ```
 mpu-project01/
 ├── docker-compose.yml
+├── init.sql                      # Schema — runs automatically on first PostgreSQL start
 ├── .env                          # NOT in git
 ├── .env.example
 ├── .gitignore
@@ -180,23 +143,16 @@ mpu-project01/
 ├── Dockerfile.watcher            # alerts_watcher container image
 ├── alerts_watcher.py             # Tails alert_json.txt and writes to PostgreSQL
 │
-├── ml_engine/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── ml_watcher.py             # Captures traffic, trains model, detects anomalies
-│   └── models/
-│       └── model.pkl             # Saved Isolation Forest model (generated at runtime)
-│
-├── database/
-│   └── init.sql                  # Schema — runs automatically on first PostgreSQL start
-│
 ├── snort/
 │   ├── snort.lua                 # Snort 3 configuration
+│   ├── entrypoint.sh             # Snort startup script
 │   └── rules/
 │       └── local.rules
 │
 ├── snort_logs/                   # Shared volume: Snort writes, alerts_watcher reads
 │   └── alert_json.txt
+│
+├── n8n_data/                     # n8n persistent workflow storage
 │
 └── dashboard/
     ├── backend/
@@ -205,7 +161,7 @@ mpu-project01/
     │   ├── main.py
     │   ├── database.py
     │   └── routes/
-    │       ├── alerts.py         # /api/alerts/snort  /api/alerts/ml
+    │       ├── alerts.py         # /api/alerts/snort
     │       └── stats.py          # /api/stats/*
     └── frontend/
         ├── Dockerfile
@@ -216,7 +172,6 @@ mpu-project01/
             └── components/
                 ├── StatsCards.js
                 ├── SnortAlerts.js
-                ├── MLDetections.js
                 └── ProtocolChart.js
 ```
 
@@ -227,70 +182,61 @@ mpu-project01/
 ### Snort 3 (`ciscotalos/snort3` — `network_mode: host`)
 
 - Signature-based detection engine using rules from `snort/rules/local.rules`
-- Runs with `network_mode: host` and `privileged: true`
+- Runs with `network_mode: host` and `privileged: true` for direct NIC access
 - On rule match: appends a JSON object to `snort_logs/alert_json.txt`
 - Has no database dependency — writes only to the shared volume
 
-### alerts_watcher (Python — `mpu-network`)
+### alerts_watcher (Python — `172.28.0.101`)
 
-- Tails `alert_json.txt` using a file position cursor (survives restarts)
+- Tails `alert_json.txt` using a persistent file position cursor (survives restarts)
 - Writes one row to `signature` and one row to `event` per alert
 - Polls every 1 second with `restart: unless-stopped`
 
-### ML Engine (Python — `network_mode: host`)
+### PostgreSQL 15 (`172.28.0.105`)
 
-- Captures live traffic from `wlp4s0` using Scapy
-- **Training mode:** collects normal traffic flows for 15 minutes, trains Isolation Forest, saves `model.pkl`
-- **Detection mode:** aggregates flows every 10 seconds, scores them against the model
-- Before inserting an alert, checks `event` table — skips if Snort already detected the same flow
-- Inserts anomalies into `ml_alerts` with verdict (`HIGH_THREAT` / `MEDIUM_THREAT`) and confidence score
+- Persistent storage for all alerts via the `event` and `signature` tables
+- `LISTEN/NOTIFY` trigger on the `event` table fires instantly on every INSERT
+- Schema initialized automatically from `init.sql` on first start
+- Port 5432 exposed on the host for local development access
 
-### PostgreSQL 15 (`mpu-network`)
+### n8n (`172.28.0.100`)
 
-- Persistent storage for all alerts
-- `LISTEN/NOTIFY` triggers on `event` and `ml_alerts` tables for real-time n8n integration
-- Schema initialized automatically from `database/init.sql`
-
-### n8n (`mpu-network`)
-
-- Two workflows running in parallel:
-  - **Workflow 1:** Postgres Trigger on `event` → Code node → Telegram (Snort alerts)
-  - **Workflow 2:** Postgres Trigger on `ml_alerts` → Code node → Telegram (ML alerts)
-- Fires instantly on INSERT via PostgreSQL `LISTEN/NOTIFY` — no polling
+- Workflow automation engine connected to PostgreSQL via `LISTEN/NOTIFY`
+- Listens on the `new_event` notification channel
+- On each new alert: formats a structured message and delivers it to a Telegram bot
 - Accessible at `http://localhost:5678`
+- Workflow state persisted in `./n8n_data`
 
-### FastAPI Backend (`mpu-network`)
+### FastAPI Backend (`172.28.0.103`)
 
 - REST API reading from PostgreSQL
-- Port 8000 — exposed for browser access
-- Auto-generated docs at `/docs`
+- Exposed on port 8000
+- Auto-generated interactive docs at `/docs`
 
-### React Frontend (`mpu-network`)
+### React Frontend (`172.28.0.102`)
 
 - Real-time dashboard polling FastAPI every 500ms
-- Displays: stats cards, Snort alerts table, ML detections table, protocol distribution chart
-- Port 3000
+- Displays: stats cards, Snort alerts table, protocol distribution chart
+- Served on port 3000 via Nginx inside the container
 
-### WebGoat (`mpu-network`)
+### WebGoat (`172.28.0.104`)
 
-- Deliberately vulnerable Java web application — attack simulation target
+- Deliberately vulnerable Java web application used as the attack target
 - Ports 8080 and 9090
 
 ---
 
 ## Prerequisites
 
-| Requirement    | Version          | Check Command            |
-| -------------- | ---------------- | ------------------------ |
-| Ubuntu Server  | 24.04 LTS        | `lsb_release -a`         |
-| Docker CE      | 24.x+            | `docker --version`       |
-| Docker Compose | v2.x+            | `docker compose version` |
-| RAM            | 8 GB recommended | `free -h`                |
-| Storage        | 40 GB minimum    | `df -h`                  |
+| Requirement    | Version   | Check Command            |
+| -------------- | --------- | ------------------------ |
+| Ubuntu         | 24.04 LTS | `lsb_release -a`         |
+| Docker CE      | 24.x+     | `docker --version`       |
+| Docker Compose | v2.x+     | `docker compose version` |
+| RAM            | 8 GB+     | `free -h`                |
+| Storage        | 20 GB+    | `df -h`                  |
 
-**Attack simulation requires:**
-- VirtualBox with Kali Linux VM
-- Kali VM network adapter set to **Bridged** mode on `wlp4s0`
+Attack simulation requires a VirtualBox Kali Linux VM with the network adapter set to **Bridged** mode on the host NIC.
 
 ---
 
@@ -305,29 +251,25 @@ cd mpu-project01
 cp .env.example .env
 
 # 3. Create required directories
-mkdir -p snort_logs ml_engine/models
+mkdir -p snort_logs n8n_data
 
 # 4. Start all services
 docker compose up -d
 
-# 5. Verify everything is running
+# 5. Verify all containers are running
 docker compose ps
 
-# 6. Watch ML engine training progress
-docker compose logs -f ml_engine
-# Wait 15 minutes — keep the network attack-free during training
-
-# 7. After training completes, start attacking from Kali
+# 6. Simulate attacks from Kali Linux
 nmap -sS <host-ip>
-hping3 -2 -p 9090 --flood <host-ip>   # DDoS test — ML only, no Snort rule
+nikto -h http://<host-ip>:8080
 
-# 8. Open the dashboard
+# 7. Open the dashboard
 # http://localhost:3000
 
-# 9. Open n8n workflows
+# 8. Open n8n
 # http://localhost:5678
 
-# 10. Open the API docs
+# 9. Open API docs
 # http://localhost:8000/docs
 ```
 
@@ -366,32 +308,11 @@ CREATE TABLE IF NOT EXISTS signature (
     sig_sid      INT UNIQUE
 );
 
-CREATE TABLE IF NOT EXISTS ml_alerts (
-    id            SERIAL PRIMARY KEY,
-    timestamp     TIMESTAMP NOT NULL,
-    src_ip        INET NOT NULL,
-    dst_ip        INET NOT NULL,
-    protocol      TEXT,
-    anomaly_score FLOAT,
-    confidence    FLOAT,
-    verdict       TEXT,
-    created_at    TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS statistics (
-    id                 SERIAL PRIMARY KEY,
-    total_snort_alerts INT DEFAULT 0,
-    total_ml_alerts    INT DEFAULT 0,
-    high_threats       INT DEFAULT 0,
-    medium_threats     INT DEFAULT 0,
-    updated_at         TIMESTAMP DEFAULT NOW()
-);
-
--- PostgreSQL NOTIFY triggers for n8n real-time alerting
+-- PostgreSQL NOTIFY trigger for n8n real-time alerting
 CREATE OR REPLACE FUNCTION notify_new_event()
 RETURNS TRIGGER AS $$
 BEGIN
-  PERFORM pg_notify('event_insert', row_to_json(NEW)::text);
+  PERFORM pg_notify('new_event', row_to_json(NEW)::text);
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -399,18 +320,6 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE TRIGGER event_insert_trigger
 AFTER INSERT ON event
 FOR EACH ROW EXECUTE FUNCTION notify_new_event();
-
-CREATE OR REPLACE FUNCTION notify_new_ml_alert()
-RETURNS TRIGGER AS $$
-BEGIN
-  PERFORM pg_notify('ml_alert_insert', row_to_json(NEW)::text);
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE TRIGGER ml_alert_insert_trigger
-AFTER INSERT ON ml_alerts
-FOR EACH ROW EXECUTE FUNCTION notify_new_ml_alert();
 ```
 
 ---
@@ -420,152 +329,80 @@ FOR EACH ROW EXECUTE FUNCTION notify_new_ml_alert();
 | Variable           | Description              | Default  |
 | ------------------ | ------------------------ | -------- |
 | `DB_NAME`          | PostgreSQL database name | `mpu_db` |
-| `DB_USER`          | PostgreSQL username       | `mpu`    |
-| `DB_PASSWORD`      | PostgreSQL user password  | `123`    |
-| `DB_ROOT_PASSWORD` | PostgreSQL root password  | `root`   |
+| `DB_USER`          | PostgreSQL username      | `mpu`    |
+| `DB_PASSWORD`      | PostgreSQL user password | `123`    |
+| `DB_ROOT_PASSWORD` | PostgreSQL root password | `root`   |
 
-> **Note:** Credentials are intentionally simple as per university project requirements.
+> Credentials are intentionally simple as per university project requirements.
 
 ---
 
 ## API Endpoints
 
-| Method | Endpoint                 | Description                           |
-| ------ | ------------------------ | ------------------------------------- |
-| GET    | `/api/alerts/snort`      | Latest Snort alerts (default: 50)     |
-| GET    | `/api/alerts/ml`         | Latest ML detections                  |
-| GET    | `/api/alerts/ml/threats` | ML detections where verdict != NORMAL |
-| GET    | `/api/stats/summary`     | Total alerts, high/medium counts      |
-| GET    | `/api/stats/by-protocol` | Alert count grouped by protocol       |
-| GET    | `/api/stats/by-priority` | Alert count grouped by priority       |
-| GET    | `/api/stats/timeline`    | Alert count per hour (last 24h)       |
-| GET    | `/docs`                  | Auto-generated API documentation      |
+| Method | Endpoint                 | Description                          |
+| ------ | ------------------------ | ------------------------------------ |
+| GET    | `/api/alerts/snort`      | Latest Snort alerts (default: 50)    |
+| GET    | `/api/stats/summary`     | Total alert count and breakdown      |
+| GET    | `/api/stats/by-protocol` | Alert count grouped by protocol      |
+| GET    | `/api/stats/by-priority` | Alert count grouped by priority      |
+| GET    | `/api/stats/timeline`    | Alert count per hour (last 24 hours) |
+| GET    | `/docs`                  | Auto-generated API documentation     |
 
 ---
 
-## ML Engine
+## Telegram Alerting with n8n
 
-### Training Phase
+n8n connects to PostgreSQL and listens on the `new_event` notification channel. When Snort detects an attack and `alerts_watcher` inserts a row into the `event` table, the PostgreSQL trigger fires a `NOTIFY` call, and n8n immediately delivers a formatted message to the configured Telegram bot — no polling involved.
 
-On first run, the ML engine enters training mode automatically:
-
-```
-[ML ENGINE] No model found — entering training mode
-[TRAINING] Collecting normal traffic for 900 seconds...
-[TRAINING] Make sure NO attacks are happening now!
-[TRAINING] 10/900s — 2 flows collected
-...
-[TRAINING] Training Isolation Forest on 171 flows...
-[TRAINING] Model saved to /app/models/model.pkl
-```
-
-The model is saved to `./ml_engine/models/model.pkl` via a Docker volume. On subsequent restarts it loads the saved model directly and skips training.
-
-### Detection Phase
+The workflow:
 
 ```
-[DETECTION] Monitoring wlp4s0 for anomalies...
-[SKIP] Already detected by Snort: 192.168.0.247 → 192.168.0.147
-[ML ALERT SAVED] HIGH_THREAT | 172.20.10.2 → 172.20.10.3
-```
-
-### Flow Features
-
-The model scores each flow using 8 features:
-
-| Feature           | Description                          |
-| ----------------- | ------------------------------------ |
-| `packet_count`    | Total packets in the flow            |
-| `total_bytes`     | Total bytes transferred              |
-| `avg_packet_size` | Average packet size                  |
-| `duration`        | Flow duration in seconds             |
-| `packets_per_sec` | Packet rate                          |
-| `syn_count`       | Number of SYN flags (TCP)            |
-| `unique_dst_ips`  | Number of distinct destination IPs   |
-| `unique_dst_ports`| Number of distinct destination ports |
-
-### Verdict Thresholds
-
-| Anomaly Score | Verdict        |
-| ------------- | -------------- |
-| < -0.3        | `HIGH_THREAT`  |
-| -0.3 to 0     | `MEDIUM_THREAT`|
-| > 0           | `NORMAL`       |
-
----
-
-## Alerting with n8n
-
-Two independent workflows run in parallel:
-
-### Workflow 1 — Snort Alerts
-
-```
-Postgres Trigger (channel: event_insert)
-        → Code node (formats Snort alert message)
-        → Telegram node
+Postgres Trigger (channel: new_event)
+        --> Code node (formats alert message)
+        --> Telegram node (sends to bot)
 ```
 
 Sample message:
+
 ```
-🚨 NIDS Alert
-Source: 🛡️ Snort
+NIDS Alert
+Source: Snort
 Type: Nmap SYN Scan Detected
 Severity: Low
-Src IP: 192.168.0.247
+Src IP: 192.168.0.10
 Dst IP: 192.168.0.147
-Ports: 54321 → 8080
-Time: 2026-04-21T11:05:30
+Ports: 54321 -> 8080
+Time: 2026-04-21 11:05:30
 ```
 
-### Workflow 2 — ML Alerts
-
-```
-Postgres Trigger (channel: ml_alert_insert)
-        → Code node (formats ML detection message)
-        → Telegram node
-```
-
-Sample message:
-```
-🤖 ML Detection
-Verdict: 🔴 HIGH
-Src IP: 172.20.10.2
-Dst IP: 172.20.10.3
-Protocol: UDP
-Confidence: 75.1%
-Score: -0.715
-Time: 2026-04-21T11:05:38
-```
-
-Both workflows fire instantly via PostgreSQL `LISTEN/NOTIFY` — no polling interval.
+n8n is accessible at `http://localhost:5678`. Workflow state is persisted in `./n8n_data` so workflows survive container restarts.
 
 ---
 
 ## Security Notes
 
-- Snort and ML engine run with `privileged: true` and `network_mode: host` — required for packet capture
-- PostgreSQL port 5432 is never exposed outside the Docker network
-- `.env` is excluded from git via `.gitignore`
-- WebGoat is intentionally vulnerable — do not expose it to public networks
-- Run this system on an isolated lab network or VM environment only
+- Snort runs with `privileged: true` and `network_mode: host` — required for raw packet capture
+- PostgreSQL port 5432 is exposed on the host for development convenience only; restrict it in production
+- `.env` is excluded from version control via `.gitignore`
+- WebGoat is deliberately vulnerable — never expose it on a public or production network
+- Run this system on an isolated lab network only
 
 ---
 
 ## Roadmap
 
 **Semester 1 — Completed**
+
 - [x] Snort 3 containerized with host network access
-- [x] alerts_watcher Python service writing to PostgreSQL
+- [x] alerts_watcher service writing Snort alerts to PostgreSQL
 - [x] FastAPI backend with alert and stats endpoints
 - [x] React dashboard with live data refresh
 - [x] WebGoat as attack simulation target
-- [x] ML Engine — Isolation Forest anomaly detection
-- [x] Two-layer detection (Snort + ML with deduplication)
-- [x] Real-time Telegram alerting via n8n
-- [x] PostgreSQL LISTEN/NOTIFY triggers for instant notifications
+- [x] Real-time Telegram alerting via n8n and PostgreSQL NOTIFY
 
 **Semester 2 — Planned**
+
+- [ ] ML-based anomaly detection layer (Isolation Forest) running in parallel with Snort
 - [ ] Cloud deployment on Azure AKS or AWS EKS
 - [ ] Infrastructure as Code with Terraform
 - [ ] CI/CD pipeline with GitHub Actions
