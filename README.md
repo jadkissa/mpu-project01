@@ -24,6 +24,7 @@ Graduation Project — Security Engineering · DevOps
 - [Components](#components)
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [Nginx Configuration](#nginx-configuration)
 - [Database Schema](#database-schema)
 - [Environment Variables](#environment-variables)
 - [API Endpoints](#api-endpoints)
@@ -36,18 +37,9 @@ Graduation Project — Security Engineering · DevOps
 
 ## Overview
 
-A full-stack Network Intrusion Detection System developed as a graduation project. The system uses **Snort 3** for signature-based detection, a custom **alerts_watcher** service to persist alerts into **PostgreSQL**, a **FastAPI** backend, a **React** dashboard for real-time monitoring, **Nginx** as a reverse proxy shielding the dashboard services, and **n8n** for automated Telegram alerting.
+A full-stack Network Intrusion Detection System developed as a graduation project. The system uses **Snort 3** for signature-based detection, a custom **alerts_watcher** service to persist alerts into **PostgreSQL**, a **FastAPI** backend, a **React** dashboard for real-time monitoring, **Nginx** as a reverse proxy in front of the frontend, backend, and n8n, and **n8n** for automated Telegram alerting.
 
 **WebGoat** runs as a deliberately vulnerable target application. Attacks are simulated from **Kali Linux** running in VirtualBox with a Bridged network adapter.
-
-### Key Targets
-
-| Metric              | Target |
-| ------------------- | ------ |
-| Detection Rate      | 94%+   |
-| Response Time       | < 50ms |
-| False Positive Rate | < 5%   |
-| Uptime              | 99%+   |
 
 ---
 
@@ -86,26 +78,27 @@ Host Machine (Ubuntu 24.04 LTS)
 |            | LISTEN/NOTIFY (channel: new_event)              |
 |            v                                                 |
 |   +------------------+                                       |
-|   |   n8n            |  172.28.0.100                         |
+|   |   n8n            |  172.28.0.100  :5678                  |
 |   |   Telegram alerts|                                       |
-|   +------------------+                                       |
-|                                                              |
-|   +-------------------------+                                |
-|   |   FastAPI Backend       |  172.28.0.103  :8000           |
-|   +----------+--------------+                                |
-|              |                                               |
-|              v                                               |
-|   +----------+--------------+                                |
-|   |   React Frontend        |  172.28.0.102  :3000           |
-|   +----------+--------------+                                |
-|              |                                               |
-|              v                                               |
-|   +--------------------------+                                |
-|   |   Nginx (reverse proxy) |  172.28.0.106  :80             |
-|   |   Routes to Frontend    |                                |
-|   |   & Backend, shields    |                                |
-|   |   internal services     |                                |
-|   +--------------------------+                                |
+|   +--------+---------+                                       |
+|            ^                                                 |
+|            |                                                 |
+|   +--------+------------------+                              |
+|   |   FastAPI Backend         |  172.28.0.103  :8000         |
+|   +--------+------------------+                              |
+|            ^                                                 |
+|            |                                                 |
+|   +--------+------------------+                              |
+|   |   React Frontend          |  172.28.0.102  :80           |
+|   +--------+------------------+                              |
+|            ^                                                 |
+|            |  reverse proxy routes: / , /api/ , /n8n/        |
+|   +--------+------------------+                              |
+|   |   Nginx (reverse proxy)   |  172.28.0.106  :80           |
+|   |   /       --> frontend:80                                |
+|   |   /api/   --> backend:8000/api/                          |
+|   |   /n8n/   --> n8n:5678/ (WebSocket upgrade)               |
+|   +----------------------------+                              |
 |                                                              |
 |   +--------------------------------------------------+       |
 |   |   WebGoat               172.28.0.104  :8080/:9090 |       |
@@ -116,8 +109,8 @@ Attack Simulation:
   Kali Linux (VirtualBox, Bridged) --> attacks --> Host / WebGoat
   Snort detects attacks --> event table --> Dashboard + Telegram
 
-Client access:
-  Browser --> Nginx (:80) --> React Frontend / FastAPI Backend
+Client access (single entry point):
+  Browser --> Nginx (:80) --> React Frontend / FastAPI Backend / n8n
 ```
 
 ---
@@ -142,7 +135,7 @@ PostgreSQL's native `INET` type stores IP addresses cleanly and efficiently. The
 
 ### Why Nginx as a reverse proxy?
 
-Nginx sits in front of the React frontend and FastAPI backend, exposing a single entry point on port 80 while every other service (PostgreSQL, n8n, alerts_watcher) stays unreachable from outside the Docker network. This shields internal services from direct exposure, centralizes routing and future TLS termination, and keeps the attack surface of the dashboard layer minimal.
+Nginx exposes a single public entry point on port 80 and routes requests by path: `/` to the React frontend, `/api/` to the FastAPI backend, and `/n8n/` to the n8n editor — with WebSocket upgrade headers enabled so n8n's real-time UI keeps working behind the proxy. Every other internal service (PostgreSQL, alerts_watcher) stays unreachable from outside the Docker network, centralizing routing, simplifying future TLS termination, and minimizing the attack surface of the dashboard layer.
 
 ---
 
@@ -153,7 +146,6 @@ mpu-project01/
 ├── docker-compose.yml
 ├── init.sql                      # Schema — runs automatically on first PostgreSQL start
 ├── .env                          # NOT in git
-├── .env.example
 ├── .gitignore
 ├── README.md
 ├── Dockerfile.watcher            # alerts_watcher container image
@@ -171,7 +163,7 @@ mpu-project01/
 ├── n8n_data/                     # n8n persistent workflow storage
 │
 ├── nginx/
-│   ├── nginx.conf                # Reverse proxy configuration
+│   ├── nginx.conf                # Reverse proxy configuration (/, /api/, /n8n/)
 │   └── Dockerfile
 │
 └── dashboard/
@@ -219,32 +211,33 @@ mpu-project01/
 - Schema initialized automatically from `init.sql` on first start
 - Port 5432 exposed on the host for local development access
 
-### n8n (`172.28.0.100`)
+### n8n (`172.28.0.100` — internal port `5678`)
 
 - Workflow automation engine connected to PostgreSQL via `LISTEN/NOTIFY`
 - Listens on the `new_event` notification channel
 - On each new alert: formats a structured message and delivers it to a Telegram bot
-- Accessible at `http://localhost:5678`
+- Reachable through Nginx at `/n8n/`, with WebSocket upgrade support for the live editor UI
 - Workflow state persisted in `./n8n_data`
 
-### FastAPI Backend (`172.28.0.103`)
+### FastAPI Backend (`172.28.0.103` — internal port `8000`)
 
 - REST API reading from PostgreSQL
-- Exposed internally on port 8000, reachable through Nginx
-- Auto-generated interactive docs at `/docs`
+- Reachable through Nginx at `/api/`
+- Auto-generated interactive docs at `/api/docs`
 
-### React Frontend (`172.28.0.102`)
+### React Frontend (`172.28.0.102` — internal port `80`)
 
 - Real-time dashboard polling FastAPI every 500ms
 - Displays: stats cards, Snort alerts table, protocol distribution chart
-- Served internally on port 3000, reachable through Nginx
+- Served internally on port 80, reachable through Nginx at `/`
 
-### Nginx (`172.28.0.106`)
+### Nginx (`172.28.0.106` — port `80`)
 
-- Reverse proxy in front of the React frontend and FastAPI backend
-- Single public entry point on port 80
-- Routes `/api/*` to the FastAPI backend and everything else to the React frontend
-- Shields internal dashboard services from direct external access
+- Reverse proxy and single public entry point for the whole dashboard stack
+- `location /` → `proxy_pass http://frontend:80`
+- `location /api/` → `proxy_pass http://backend:8000/api/`
+- `location /n8n/` → `proxy_pass http://n8n:5678/`, with `Upgrade`/`Connection` headers and `proxy_buffering off` for n8n's WebSocket-based editor
+- Forwards `Host`, `X-Real-IP`, and `X-Forwarded-For` headers to preserve client info upstream
 
 ### WebGoat (`172.28.0.104`)
 
@@ -293,12 +286,54 @@ nikto -h http://<host-ip>:8080
 # 7. Open the dashboard (through Nginx)
 # http://localhost
 
-# 8. Open n8n
-# http://localhost:5678
+# 8. Open n8n (through Nginx)
+# http://localhost/n8n/
 
 # 9. Open API docs (through Nginx)
 # http://localhost/api/docs
 ```
+
+---
+
+## Nginx Configuration
+
+`nginx/nginx.conf`:
+
+```nginx
+server {
+    listen 80;
+    server_name localhost;
+
+    location / {
+        proxy_pass http://frontend:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location /api/ {
+        proxy_pass http://backend:8000/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location /n8n/ {
+        proxy_pass http://n8n:5678/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+```
+
+- `proxy_pass` targets use Docker Compose service names (`frontend`, `backend`, `n8n`) rather than static IPs, relying on Docker's internal DNS.
+- The `/n8n/` block adds `proxy_http_version 1.1` plus the `Upgrade`/`Connection` headers and disables buffering — required for n8n's editor, which relies on WebSockets for live workflow updates.
+- `X-Real-IP` and `X-Forwarded-For` are forwarded on `/` and `/n8n/` so upstream services can see the real client IP instead of Nginx's.
 
 ---
 
@@ -366,7 +401,7 @@ FOR EACH ROW EXECUTE FUNCTION notify_new_event();
 
 ## API Endpoints
 
-All endpoints are reachable through Nginx under `/api`.
+All endpoints are reachable through Nginx under `/api/`.
 
 | Method | Endpoint                 | Description                          |
 | ------ | ------------------------ | ------------------------------------ |
@@ -404,14 +439,14 @@ Ports: 54321 -> 8080
 Time: 2026-04-21 11:05:30
 ```
 
-n8n is accessible at `http://localhost:5678`. Workflow state is persisted in `./n8n_data` so workflows survive container restarts.
+n8n's editor is accessible through Nginx at `http://localhost/n8n/`. Workflow state is persisted in `./n8n_data` so workflows survive container restarts.
 
 ---
 
 ## Security Notes
 
 - Snort runs with `privileged: true` and `network_mode: host` — required for raw packet capture
-- Nginx is the only service exposed on the host beyond what's needed for development; all other internal services stay on the Docker network
+- Nginx is the only service exposed on the host beyond what's needed for development; all other internal services (frontend, backend, n8n) are reached only through the reverse proxy
 - PostgreSQL port 5432 is exposed on the host for development convenience only; restrict it in production
 - `.env` is excluded from version control via `.gitignore`
 - WebGoat is deliberately vulnerable — never expose it on a public or production network
@@ -427,26 +462,9 @@ n8n is accessible at `http://localhost:5678`. Workflow state is persisted in `./
 - [x] alerts_watcher service writing Snort alerts to PostgreSQL
 - [x] FastAPI backend with alert and stats endpoints
 - [x] React dashboard with live data refresh
-- [x] Nginx reverse proxy in front of the dashboard services
+- [x] Nginx reverse proxy routing to frontend, backend, and n8n
 - [x] WebGoat as attack simulation target
 - [x] Real-time Telegram alerting via n8n and PostgreSQL NOTIFY
-
-**Semester 2 — Planned**
-
-- [ ] Real-time alert frequency chart on the dashboard (alert count over time)
-- [ ] Cloud deployment on Azure AKS or AWS EKS
-- [ ] Infrastructure as Code with Terraform
-- [ ] CI/CD pipeline with GitHub Actions
-- [ ] Monitoring with Prometheus and Grafana
-
----
-
-## Authors
-
-| Name               | Role       |
-| ------------------ | ---------- |
-| Jad Issa           | CS Student |
-| Abdulkader Motraji | CS Student |
 
 ---
 
