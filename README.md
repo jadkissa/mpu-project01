@@ -9,6 +9,7 @@ Graduation Project — Security Engineering · DevOps
 ![Snort](https://img.shields.io/badge/Snort-3.x-FF0000?style=flat)
 ![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?style=flat&logo=fastapi&logoColor=white)
+![Nginx](https://img.shields.io/badge/Nginx-Reverse_Proxy-009639?style=flat&logo=nginx&logoColor=white)
 ![n8n](https://img.shields.io/badge/n8n-latest-EA4B71?style=flat&logo=n8n&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat)
 
@@ -35,7 +36,7 @@ Graduation Project — Security Engineering · DevOps
 
 ## Overview
 
-A full-stack Network Intrusion Detection System developed as a graduation project. The system uses **Snort 3** for signature-based detection, a custom **alerts_watcher** service to persist alerts into **PostgreSQL**, a **FastAPI** backend, a **React** dashboard for real-time monitoring, and **n8n** for automated Telegram alerting.
+A full-stack Network Intrusion Detection System developed as a graduation project. The system uses **Snort 3** for signature-based detection, a custom **alerts_watcher** service to persist alerts into **PostgreSQL**, a **FastAPI** backend, a **React** dashboard for real-time monitoring, **Nginx** as a reverse proxy shielding the dashboard services, and **n8n** for automated Telegram alerting.
 
 **WebGoat** runs as a deliberately vulnerable target application. Attacks are simulated from **Kali Linux** running in VirtualBox with a Bridged network adapter.
 
@@ -68,44 +69,55 @@ Host Machine (Ubuntu 24.04 LTS)
            |
            | shared volume (snort_logs/)
            v
-+----------------------------------------------------------+
-|   Docker Compose Network (mpu-network 172.28.0.0/16)     |
-|                                                          |
-|   +--------------------------------------------------+   |
-|   |   alerts_watcher        172.28.0.101             |   |
-|   |   Tails alert_json.txt  -->  PostgreSQL           |   |
-|   +--------------------------------------------------+   |
-|                                                          |
-|   +------------------+                                   |
-|   |   PostgreSQL 15  |  172.28.0.105                     |
-|   |   event table    |                                   |
-|   |   NOTIFY trigger |                                   |
-|   +--------+---------+                                   |
-|            |                                             |
-|            | LISTEN/NOTIFY (channel: new_event)          |
-|            v                                             |
-|   +------------------+                                   |
-|   |   n8n            |  172.28.0.100                     |
-|   |   Telegram alerts|                                   |
-|   +------------------+                                   |
-|                                                          |
-|   +-------------------------+                            |
-|   |   FastAPI Backend       |  172.28.0.103  :8000       |
-|   +----------+--------------+                            |
-|              |                                           |
-|              v                                           |
-|   +----------+--------------+                            |
-|   |   React Frontend        |  172.28.0.102  :3000       |
-|   +-------------------------+                            |
-|                                                          |
-|   +--------------------------------------------------+   |
-|   |   WebGoat               172.28.0.104  :8080/:9090 |  |
-|   +--------------------------------------------------+   |
-+----------------------------------------------------------+
++------------------------------------------------------------+
+|   Docker Compose Network (mpu-network 172.28.0.0/16)       |
+|                                                              |
+|   +--------------------------------------------------+       |
+|   |   alerts_watcher        172.28.0.101             |       |
+|   |   Tails alert_json.txt  -->  PostgreSQL           |       |
+|   +--------------------------------------------------+       |
+|                                                              |
+|   +------------------+                                       |
+|   |   PostgreSQL 15  |  172.28.0.105                         |
+|   |   event table    |                                       |
+|   |   NOTIFY trigger |                                       |
+|   +--------+---------+                                       |
+|            |                                                 |
+|            | LISTEN/NOTIFY (channel: new_event)              |
+|            v                                                 |
+|   +------------------+                                       |
+|   |   n8n            |  172.28.0.100                         |
+|   |   Telegram alerts|                                       |
+|   +------------------+                                       |
+|                                                              |
+|   +-------------------------+                                |
+|   |   FastAPI Backend       |  172.28.0.103  :8000           |
+|   +----------+--------------+                                |
+|              |                                               |
+|              v                                               |
+|   +----------+--------------+                                |
+|   |   React Frontend        |  172.28.0.102  :3000           |
+|   +----------+--------------+                                |
+|              |                                               |
+|              v                                               |
+|   +--------------------------+                                |
+|   |   Nginx (reverse proxy) |  172.28.0.106  :80             |
+|   |   Routes to Frontend    |                                |
+|   |   & Backend, shields    |                                |
+|   |   internal services     |                                |
+|   +--------------------------+                                |
+|                                                              |
+|   +--------------------------------------------------+       |
+|   |   WebGoat               172.28.0.104  :8080/:9090 |       |
+|   +--------------------------------------------------+       |
++------------------------------------------------------------+
 
 Attack Simulation:
   Kali Linux (VirtualBox, Bridged) --> attacks --> Host / WebGoat
   Snort detects attacks --> event table --> Dashboard + Telegram
+
+Client access:
+  Browser --> Nginx (:80) --> React Frontend / FastAPI Backend
 ```
 
 ---
@@ -127,6 +139,10 @@ n8n listens to PostgreSQL's native `LISTEN/NOTIFY` channel, which means notifica
 ### Why PostgreSQL?
 
 PostgreSQL's native `INET` type stores IP addresses cleanly and efficiently. The `LISTEN/NOTIFY` mechanism enables real-time push notifications to n8n without any polling overhead. The fixed subnet (`172.28.0.0/16`) with static IPs for each service ensures predictable inter-container communication.
+
+### Why Nginx as a reverse proxy?
+
+Nginx sits in front of the React frontend and FastAPI backend, exposing a single entry point on port 80 while every other service (PostgreSQL, n8n, alerts_watcher) stays unreachable from outside the Docker network. This shields internal services from direct exposure, centralizes routing and future TLS termination, and keeps the attack surface of the dashboard layer minimal.
 
 ---
 
@@ -153,6 +169,10 @@ mpu-project01/
 │   └── alert_json.txt
 │
 ├── n8n_data/                     # n8n persistent workflow storage
+│
+├── nginx/
+│   ├── nginx.conf                # Reverse proxy configuration
+│   └── Dockerfile
 │
 └── dashboard/
     ├── backend/
@@ -210,14 +230,21 @@ mpu-project01/
 ### FastAPI Backend (`172.28.0.103`)
 
 - REST API reading from PostgreSQL
-- Exposed on port 8000
+- Exposed internally on port 8000, reachable through Nginx
 - Auto-generated interactive docs at `/docs`
 
 ### React Frontend (`172.28.0.102`)
 
 - Real-time dashboard polling FastAPI every 500ms
 - Displays: stats cards, Snort alerts table, protocol distribution chart
-- Served on port 3000 via Nginx inside the container
+- Served internally on port 3000, reachable through Nginx
+
+### Nginx (`172.28.0.106`)
+
+- Reverse proxy in front of the React frontend and FastAPI backend
+- Single public entry point on port 80
+- Routes `/api/*` to the FastAPI backend and everything else to the React frontend
+- Shields internal dashboard services from direct external access
 
 ### WebGoat (`172.28.0.104`)
 
@@ -263,14 +290,14 @@ docker compose ps
 nmap -sS <host-ip>
 nikto -h http://<host-ip>:8080
 
-# 7. Open the dashboard
-# http://localhost:3000
+# 7. Open the dashboard (through Nginx)
+# http://localhost
 
 # 8. Open n8n
 # http://localhost:5678
 
-# 9. Open API docs
-# http://localhost:8000/docs
+# 9. Open API docs (through Nginx)
+# http://localhost/api/docs
 ```
 
 ---
@@ -339,6 +366,8 @@ FOR EACH ROW EXECUTE FUNCTION notify_new_event();
 
 ## API Endpoints
 
+All endpoints are reachable through Nginx under `/api`.
+
 | Method | Endpoint                 | Description                          |
 | ------ | ------------------------ | ------------------------------------ |
 | GET    | `/api/alerts/snort`      | Latest Snort alerts (default: 50)    |
@@ -346,7 +375,7 @@ FOR EACH ROW EXECUTE FUNCTION notify_new_event();
 | GET    | `/api/stats/by-protocol` | Alert count grouped by protocol      |
 | GET    | `/api/stats/by-priority` | Alert count grouped by priority      |
 | GET    | `/api/stats/timeline`    | Alert count per hour (last 24 hours) |
-| GET    | `/docs`                  | Auto-generated API documentation     |
+| GET    | `/api/docs`              | Auto-generated API documentation     |
 
 ---
 
@@ -382,6 +411,7 @@ n8n is accessible at `http://localhost:5678`. Workflow state is persisted in `./
 ## Security Notes
 
 - Snort runs with `privileged: true` and `network_mode: host` — required for raw packet capture
+- Nginx is the only service exposed on the host beyond what's needed for development; all other internal services stay on the Docker network
 - PostgreSQL port 5432 is exposed on the host for development convenience only; restrict it in production
 - `.env` is excluded from version control via `.gitignore`
 - WebGoat is deliberately vulnerable — never expose it on a public or production network
@@ -397,12 +427,13 @@ n8n is accessible at `http://localhost:5678`. Workflow state is persisted in `./
 - [x] alerts_watcher service writing Snort alerts to PostgreSQL
 - [x] FastAPI backend with alert and stats endpoints
 - [x] React dashboard with live data refresh
+- [x] Nginx reverse proxy in front of the dashboard services
 - [x] WebGoat as attack simulation target
 - [x] Real-time Telegram alerting via n8n and PostgreSQL NOTIFY
 
 **Semester 2 — Planned**
 
-- [ ] ML-based anomaly detection layer (Isolation Forest) running in parallel with Snort
+- [ ] Real-time alert frequency chart on the dashboard (alert count over time)
 - [ ] Cloud deployment on Azure AKS or AWS EKS
 - [ ] Infrastructure as Code with Terraform
 - [ ] CI/CD pipeline with GitHub Actions
