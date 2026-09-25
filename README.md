@@ -468,6 +468,3 @@ n8n's editor is accessible through Nginx at `http://localhost/n8n/`. Workflow st
 
 ---
 
-## License
-
-This project is licensed under the MIT License.
